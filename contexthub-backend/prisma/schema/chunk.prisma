@@ -1,0 +1,17 @@
+model Chunk {
+  id          String                       @id @default(cuid())
+  documentId  String
+  ordinal     Int
+  content     String
+  tokenCount  Int
+  pageNumber  Int?
+  startOffset Int?
+  endOffset   Int?
+  embedding   Unsupported("vector(1536)")?
+  createdAt   DateTime                     @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@index([documentId, ordinal])
+}

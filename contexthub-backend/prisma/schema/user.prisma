@@ -1,0 +1,16 @@
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  passwordHash  String
+  name          String?
+  avatarUrl     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  memberships    WorkspaceMember[]
+  conversations  Conversation[]
+  documents      Document[]        @relation("UploadedDocuments")
+  refreshTokens  RefreshToken[]
+  sentInvites    Invite[]          @relation("InvitedBy")
+  auditLogs      AuditLog[]
+}

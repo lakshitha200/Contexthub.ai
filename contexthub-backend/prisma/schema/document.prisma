@@ -1,0 +1,32 @@
+enum DocStatus {
+  UPLOADED
+  PARSING
+  CHUNKING
+  EMBEDDING
+  READY
+  FAILED
+}
+
+model Document {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  collectionId String
+  uploaderId   String
+  filename     String
+  mimeType     String
+  sizeBytes    Int
+  storageKey   String
+  status       DocStatus @default(UPLOADED)
+  errorMessage String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  workspace  Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  uploader   User       @relation("UploadedDocuments", fields: [uploaderId], references: [id])
+  chunks     Chunk[]
+
+  @@index([workspaceId])
+  @@index([collectionId])
+  @@index([status])
+}

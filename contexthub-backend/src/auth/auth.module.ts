@@ -26,6 +26,6 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     GoogleStrategy,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
   ],
-  exports: [AuthService, TokenService],
+  exports: [AuthService, TokenService, MailService],
 })
 export class AuthModule {}

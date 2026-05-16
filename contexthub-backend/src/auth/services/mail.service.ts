@@ -23,6 +23,15 @@ export class MailService {
     this.logger.log(`Password reset for ${email}: ${url}`);
   }
 
+  async sendWorkspaceInvite(email: string, workspaceName: string, token: string) {
+    const url = `${this.webUrl()}/invite/accept?token=${token}`;
+    this.logger.log(`Invite to "${workspaceName}" for ${email}: ${url}`);
+  }
+
+  private webUrl(): string {
+    return this.config.get<string>('WEB_URL', 'http://localhost:3001');
+  }
+
   private appUrl(): string {
     return this.config.get<string>('APP_URL', 'http://localhost:3000');
   }

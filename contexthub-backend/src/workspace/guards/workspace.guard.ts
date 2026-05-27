@@ -5,6 +5,7 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import type { Request } from 'express';
 import { Role } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ROLES_KEY } from '../decorators/roles.decorator';
@@ -17,10 +18,11 @@ export class WorkspaceGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest();
+    const request = context.switchToHttp().getRequest<Request>();
     const user = request.user as { id: string } | undefined;
+    const params = (request.params ?? {}) as Record<string, string | undefined>;
     const workspaceId: string | undefined =
-      request.params?.id ?? request.params?.workspaceId ?? request.params?.wsId;
+      params.id ?? params.workspaceId ?? params.wsId;
 
     if (!user) throw new ForbiddenException('Not authenticated');
     if (!workspaceId) throw new ForbiddenException('Workspace not specified');

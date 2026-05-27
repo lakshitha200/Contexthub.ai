@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'node:crypto';
-import { Role } from '../../generated/prisma/client';
+import { Prisma, Role } from '../../generated/prisma/client';
 import { MailService } from '../auth/services/mail.service';
 import { TokenService } from '../auth/services/token.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -27,21 +27,36 @@ export class WorkspaceService {
   ) {}
 
   async create(userId: string, dto: CreateWorkspaceDto) {
-    const slug = await this.generateUniqueSlug(dto.name);
+    const base = this.slugify(dto.name);
 
-    return this.prisma.workspace.create({
-      data: {
-        name: dto.name,
-        slug,
-        description: dto.description ?? null,
-        members: {
-          create: { userId, role: Role.OWNER },
-        },
-      },
-      include: {
-        members: { where: { userId }, select: { role: true } },
-      },
-    });
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const slug = attempt === 0 ? base : `${base}-${randomBytes(3).toString('hex')}`;
+      try {
+        return await this.prisma.workspace.create({
+          data: {
+            name: dto.name,
+            slug,
+            description: dto.description ?? null,
+            members: {
+              create: { userId, role: Role.OWNER },
+            },
+          },
+          include: {
+            members: { where: { userId }, select: { role: true } },
+          },
+        });
+      } catch (err) {
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002' &&
+          (err.meta?.target as string[] | undefined)?.includes('slug')
+        ) {
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new ConflictException('Could not allocate a unique workspace slug');
   }
 
   async listMine(userId: string) {
@@ -100,13 +115,15 @@ export class WorkspaceService {
     inviterId: string,
     dto: InviteMemberDto,
   ) {
+    const email = dto.email.trim().toLowerCase();
+
     const workspace = await this.prisma.workspace.findUniqueOrThrow({
       where: { id: workspaceId },
       select: { name: true },
     });
 
     const existingMember = await this.prisma.workspaceMember.findFirst({
-      where: { workspaceId, user: { email: dto.email } },
+      where: { workspaceId, user: { email } },
     });
     if (existingMember) {
       throw new ConflictException('User is already a member of this workspace');
@@ -117,10 +134,10 @@ export class WorkspaceService {
     const expiresAt = new Date(Date.now() + this.inviteTtlMs());
 
     await this.prisma.invite.upsert({
-      where: { workspaceId_email: { workspaceId, email: dto.email } },
+      where: { workspaceId_email: { workspaceId, email } },
       create: {
         workspaceId,
-        email: dto.email,
+        email,
         role: dto.role,
         tokenHash,
         invitedById: inviterId,
@@ -136,50 +153,47 @@ export class WorkspaceService {
       },
     });
 
-    await this.mail.sendWorkspaceInvite(dto.email, workspace.name, rawToken);
+    await this.mail.sendWorkspaceInvite(email, workspace.name, rawToken);
     return { success: true };
   }
 
   async acceptInvite(userId: string, userEmail: string, rawToken: string) {
     const tokenHash = this.tokens.hash(rawToken);
-    const invite = await this.prisma.invite.findUnique({ where: { tokenHash } });
 
-    if (
-      !invite ||
-      invite.acceptedAt ||
-      invite.revokedAt ||
-      invite.expiresAt < new Date()
-    ) {
-      throw new BadRequestException('Invalid or expired invite');
-    }
-    if (invite.email.toLowerCase() !== userEmail.toLowerCase()) {
-      throw new ForbiddenException('This invite was issued for a different email');
-    }
+    return this.prisma.$transaction(async (tx) => {
+      const invite = await tx.invite.findUnique({ where: { tokenHash } });
 
-    const existing = await this.prisma.workspaceMember.findUnique({
-      where: {
-        userId_workspaceId: { userId, workspaceId: invite.workspaceId },
-      },
-    });
-    if (existing) {
-      await this.prisma.invite.update({
+      if (
+        !invite ||
+        invite.acceptedAt ||
+        invite.revokedAt ||
+        invite.expiresAt < new Date()
+      ) {
+        throw new BadRequestException('Invalid or expired invite');
+      }
+      if (invite.email.toLowerCase() !== userEmail.toLowerCase()) {
+        throw new ForbiddenException('This invite was issued for a different email');
+      }
+
+      await tx.invite.update({
         where: { id: invite.id },
         data: { acceptedAt: new Date() },
       });
-      throw new ConflictException('You are already a member of this workspace');
-    }
 
-    const [membership] = await this.prisma.$transaction([
-      this.prisma.workspaceMember.create({
-        data: { userId, workspaceId: invite.workspaceId, role: invite.role },
-      }),
-      this.prisma.invite.update({
-        where: { id: invite.id },
-        data: { acceptedAt: new Date() },
-      }),
-    ]);
-
-    return membership;
+      try {
+        return await tx.workspaceMember.create({
+          data: { userId, workspaceId: invite.workspaceId, role: invite.role },
+        });
+      } catch (err) {
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002'
+        ) {
+          throw new ConflictException('You are already a member of this workspace');
+        }
+        throw err;
+      }
+    });
   }
 
   async updateMemberRole(
@@ -249,20 +263,15 @@ export class WorkspaceService {
     }
   }
 
-  private async generateUniqueSlug(name: string): Promise<string> {
-    const base =
+  private slugify(name: string): string {
+    return (
       name
         .toLowerCase()
         .trim()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '')
-        .slice(0, 40) || 'workspace';
-
-    let slug = base;
-    while (await this.prisma.workspace.findUnique({ where: { slug } })) {
-      slug = `${base}-${randomBytes(3).toString('hex')}`;
-    }
-    return slug;
+        .slice(0, 40) || 'workspace'
+    );
   }
 
   private inviteTtlMs(): number {

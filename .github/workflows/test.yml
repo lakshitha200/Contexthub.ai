@@ -42,6 +42,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The generated/ folder is gitignored, so CI must generate the Prisma client itself.
+      - name: Generate Prisma client
+        run: npx prisma generate
+
       # Try to restore the pgvector image from GitHub's cache (~300 MB).
       # Key includes the image tag, so bumping the tag invalidates the cache.
       - name: Restore Docker image cache

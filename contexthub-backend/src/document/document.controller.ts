@@ -74,6 +74,15 @@ export class DocumentController {
   }
 
   @Roles(Role.OWNER, Role.ADMIN)
+  @Post(':documentId/reprocess')
+  reprocess(
+    @Param('id') workspaceId: string,
+    @Param('documentId') documentId: string,
+  ) {
+    return this.documents.reprocess(workspaceId, documentId);
+  }
+
+  @Roles(Role.OWNER, Role.ADMIN)
   @Delete(':documentId')
   remove(
     @Param('id') workspaceId: string,

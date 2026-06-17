@@ -32,7 +32,7 @@ export class WorkspaceGuard implements CanActivate {
         userId_workspaceId: { userId: user.id, workspaceId },
       },
     });
-
+    
     if (!membership) {
       throw new ForbiddenException('You are not a member of this workspace');
     }

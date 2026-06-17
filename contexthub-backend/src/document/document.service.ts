@@ -6,6 +6,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { DocStatus } from '../../generated/prisma/client';
 import { CollectionService } from '../collection/collection.service';
+import { JobService } from '../jobs/job.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { UploadedFileLike } from './dto/uploaded-file';
@@ -28,6 +29,7 @@ export class DocumentService {
     private readonly storage: StorageService,
     private readonly collections: CollectionService,
     private readonly config: ConfigService,
+    private readonly jobs: JobService,
   ) {}
 
   async create(
@@ -47,7 +49,7 @@ export class DocumentService {
       file.buffer,
     );
 
-    return this.prisma.document.create({
+    const document = await this.prisma.document.create({
       data: {
         workspaceId,
         collectionId,
@@ -59,6 +61,18 @@ export class DocumentService {
         status: DocStatus.UPLOADED,
       },
     });
+
+    // Kick off the background ingestion pipeline (parse → chunk → embed).
+    await this.jobs.enqueue('ingest', { documentId: document.id });
+
+    return document;
+  }
+
+  /** Re-run ingestion for a document (e.g. after a FAILED parse). */
+  async reprocess(workspaceId: string, documentId: string) {
+    const document = await this.getOwnedOrThrow(workspaceId, documentId);
+    await this.jobs.enqueue('ingest', { documentId: document.id });
+    return { success: true };
   }
 
   async list(

@@ -4,6 +4,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
+import { ChatModule } from './chat/chat.module';
 import { CollectionModule } from './collection/collection.module';
 import { DocumentModule } from './document/document.module';
 import { EmbeddingModule } from './embedding/embedding.module';
@@ -26,6 +27,7 @@ import { WorkspaceModule } from './workspace/workspace.module';
     CollectionModule,
     DocumentModule,
     IngestionModule,
+    ChatModule,
   ],
   controllers: [AppController],
   providers: [AppService],

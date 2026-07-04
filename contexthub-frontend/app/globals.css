@@ -1,0 +1,206 @@
+@import "tailwindcss";
+
+/* Class-based dark mode (next-themes toggles `.dark` on <html>). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ------------------------------------------------------------------ */
+/*  Design tokens                                                      */
+/* ------------------------------------------------------------------ */
+:root {
+  --background: #fbfbfd;
+  --foreground: #18181b;
+
+  --card: #ffffff;
+  --card-foreground: #18181b;
+
+  --popover: #ffffff;
+  --popover-foreground: #18181b;
+
+  --primary: #6d5efc;
+  --primary-foreground: #ffffff;
+
+  --secondary: #f4f4f6;
+  --secondary-foreground: #27272a;
+
+  --muted: #f4f4f6;
+  --muted-foreground: #71717a;
+
+  --accent: #eef0ff;
+  --accent-foreground: #4f46e5;
+
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #e11d48;
+  --danger-foreground: #ffffff;
+
+  --border: #ececef;
+  --input: #e6e6ea;
+  --ring: #6d5efc;
+
+  --sidebar: #f7f7f9;
+  --sidebar-foreground: #3f3f46;
+
+  --radius: 0.85rem;
+
+  --gradient-brand: linear-gradient(135deg, #7c6bff 0%, #a78bfa 45%, #f0abfc 100%);
+  --shadow-soft: 0 1px 2px rgba(24, 24, 27, 0.04), 0 8px 24px -12px rgba(24, 24, 27, 0.12);
+  --shadow-pop: 0 2px 8px rgba(24, 24, 27, 0.06), 0 24px 48px -20px rgba(24, 24, 27, 0.24);
+}
+
+.dark {
+  --background: #09090b;
+  --foreground: #f4f4f5;
+
+  --card: #131316;
+  --card-foreground: #f4f4f5;
+
+  --popover: #16161a;
+  --popover-foreground: #f4f4f5;
+
+  --primary: #8b7dff;
+  --primary-foreground: #0b0b0f;
+
+  --secondary: #1c1c20;
+  --secondary-foreground: #e4e4e7;
+
+  --muted: #1a1a1e;
+  --muted-foreground: #8b8b93;
+
+  --accent: #1e1b3a;
+  --accent-foreground: #c4b5fd;
+
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #fb7185;
+  --danger-foreground: #0b0b0f;
+
+  --border: #232328;
+  --input: #2a2a30;
+  --ring: #8b7dff;
+
+  --sidebar: #0e0e11;
+  --sidebar-foreground: #a1a1aa;
+
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 2px 8px rgba(0, 0, 0, 0.5), 0 24px 48px -20px rgba(0, 0, 0, 0.8);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Map tokens to Tailwind theme                                       */
+/* ------------------------------------------------------------------ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 0.25rem);
+  --radius-sm: calc(var(--radius) - 0.4rem);
+  --radius-xl: calc(var(--radius) + 0.35rem);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --shadow-soft: var(--shadow-soft);
+  --shadow-pop: var(--shadow-pop);
+
+  --animate-shimmer: shimmer 1.6s linear infinite;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Base                                                               */
+/* ------------------------------------------------------------------ */
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  /* Buttery, consistent focus rings */
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Utilities & keyframes                                              */
+/* ------------------------------------------------------------------ */
+@keyframes shimmer {
+  0% {
+    background-position: -600px 0;
+  }
+  100% {
+    background-position: 600px 0;
+  }
+}
+
+@keyframes caret-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.text-gradient {
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.bg-gradient-brand {
+  background: var(--gradient-brand);
+}
+
+/* Thin, unobtrusive scrollbars */
+.scroll-slim {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+.scroll-slim::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-slim::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 999px;
+}
+.scroll-slim::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted-foreground);
+}
+
+/* Grid backdrop used on marketing / empty states */
+.bg-grid {
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--color-border) 60%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--color-border) 60%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+}

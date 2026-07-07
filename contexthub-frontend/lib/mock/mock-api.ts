@@ -144,6 +144,15 @@ export const mockApi: Api = {
       await sleep(150);
       tokenStore.clear();
     },
+    async requestMagicLink() {
+      await sleep(500);
+    },
+    async verifyMagicLink() {
+      await sleep(500);
+      const tokens = { accessToken: uid("acc"), refreshToken: uid("ref") };
+      tokenStore.set(tokens);
+      return { user: { ...db.user }, tokens };
+    },
   },
 
   workspaces: {

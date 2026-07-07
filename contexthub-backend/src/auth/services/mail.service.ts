@@ -8,7 +8,8 @@ export class MailService {
   constructor(private readonly config: ConfigService) {}
 
   async sendMagicLink(email: string, token: string) {
-    const url = `${this.appUrl()}/auth/magic-link/verify?token=${token}`;
+    // Point at the frontend page, which exchanges the token for a session.
+    const url = `${this.webUrl()}/auth/magic-link/verify?token=${token}`;
     this.logger.log(`Magic link for ${email}: ${url}`);
     // TODO: replace with Resend / SendGrid / Nodemailer
   }

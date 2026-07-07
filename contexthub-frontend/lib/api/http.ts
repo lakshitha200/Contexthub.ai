@@ -34,12 +34,12 @@ async function doRefresh(): Promise<boolean> {
   const refreshToken = tokenStore.refresh;
   if (!refreshToken) return false;
   try {
+    // Backend reads the refresh token from the request BODY
+    // (ExtractJwt.fromBodyField('refreshToken')), not the Authorization header.
     const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${refreshToken}`,
-      },
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken }),
     });
     if (!res.ok) return false;
     const tokens = (await res.json()) as Tokens;

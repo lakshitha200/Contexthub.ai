@@ -6,8 +6,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
-import { API_BASE_URL, USE_MOCKS } from "@/lib/api/config";
-import { sleep } from "@/lib/utils";
+import { api } from "@/lib/api";
 
 export default function MagicLinkPage() {
   const [email, setEmail] = useState("");
@@ -18,15 +17,9 @@ export default function MagicLinkPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      if (USE_MOCKS) {
-        await sleep(700);
-      } else {
-        await fetch(`${API_BASE_URL}/auth/magic-link/request`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email }),
-        });
-      }
+      // Always resolves (backend returns success even for unknown emails to
+      // avoid leaking which addresses are registered).
+      await api.auth.requestMagicLink(email);
       setSent(true);
     } finally {
       setLoading(false);

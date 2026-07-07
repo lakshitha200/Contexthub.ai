@@ -40,6 +40,16 @@ export const realApi: Api = {
         tokenStore.clear();
       }
     },
+    requestMagicLink: (email, name) =>
+      http.post<void>("/auth/magic-link/request", { email, name }, { anonymous: true }),
+    async verifyMagicLink(token) {
+      const res = await http.get<AuthResponse>(
+        `/auth/magic-link/verify?token=${encodeURIComponent(token)}`,
+        { anonymous: true },
+      );
+      tokenStore.set(res.tokens);
+      return res;
+    },
   },
 
   workspaces: {

@@ -1,14 +1,14 @@
 "use client";
 
-import { API_BASE_URL, USE_MOCKS } from "@/lib/api/config";
+import { API_BASE_URL, REAL_AUTH } from "@/lib/api/config";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 
 export function GoogleButton() {
   const toast = useToast();
   const onClick = () => {
-    if (USE_MOCKS) {
-      toast("info", "Google sign-in is live-only", "Connect the backend to use OAuth.");
+    if (!REAL_AUTH) {
+      toast("info", "Google sign-in is live-only", "Enable real auth (backend) to use OAuth.");
       return;
     }
     window.location.href = `${API_BASE_URL}/auth/google`;

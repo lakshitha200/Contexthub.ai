@@ -9,15 +9,15 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api";
-import { USE_MOCKS } from "@/lib/api/config";
+import { AUTH_IS_MOCK } from "@/lib/api/config";
 import { useAuthStore } from "@/lib/store/auth-store";
 
 export default function LoginPage() {
   const router = useRouter();
   const toast = useToast();
   const login = useAuthStore((s) => s.login);
-  const [email, setEmail] = useState(USE_MOCKS ? "info@healplace.com" : "");
-  const [password, setPassword] = useState(USE_MOCKS ? "password123" : "");
+  const [email, setEmail] = useState(AUTH_IS_MOCK ? "info@healplace.com" : "");
+  const [password, setPassword] = useState(AUTH_IS_MOCK ? "password123" : "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
 

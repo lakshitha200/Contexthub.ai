@@ -26,6 +26,8 @@ export interface Api {
     me(): Promise<User>;
     updateProfile(p: { name?: string; avatarUrl?: string }): Promise<User>;
     logout(): Promise<void>;
+    requestMagicLink(email: string, name?: string): Promise<void>;
+    verifyMagicLink(token: string): Promise<AuthResponse>;
   };
   workspaces: {
     list(): Promise<Workspace[]>;

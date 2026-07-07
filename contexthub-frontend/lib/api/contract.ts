@@ -37,6 +37,7 @@ export interface Api {
     remove(id: string): Promise<void>;
     members(id: string): Promise<WorkspaceMember[]>;
     invite(id: string, p: InviteMemberPayload): Promise<{ ok: true }>;
+    removeMember(id: string, userId: string): Promise<void>;
     leave(id: string): Promise<void>;
   };
   collections: {

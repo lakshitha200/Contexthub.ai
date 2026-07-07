@@ -12,11 +12,67 @@ import type {
   Workspace,
   WorkspaceMember,
 } from "../types";
+import type { Role } from "../types";
 import { API_BASE_URL } from "./config";
 import type { Api } from "./contract";
 import { http } from "./http";
 
 const enc = encodeURIComponent;
+
+// ------------------------------------------------------------------
+// Normalizers — the backend nests counts under `_count` and returns the
+// caller's role only on list endpoints, so we flatten to the UI's flat types.
+// ------------------------------------------------------------------
+type RawWorkspace = Omit<Workspace, "role" | "memberCount" | "documentCount"> & {
+  role?: Role;
+  members?: { role: Role }[];
+  _count?: { members?: number; documents?: number; collections?: number };
+};
+
+function mapWorkspace(w: RawWorkspace): Workspace {
+  return {
+    id: w.id,
+    slug: w.slug,
+    name: w.name,
+    description: w.description,
+    createdAt: w.createdAt,
+    role: w.role ?? w.members?.[0]?.role,
+    memberCount: w._count?.members,
+    documentCount: w._count?.documents,
+  };
+}
+
+type RawCollection = Omit<Collection, "documentCount"> & {
+  _count?: { documents?: number; conversations?: number };
+};
+
+function mapCollection(c: RawCollection): Collection {
+  return {
+    id: c.id,
+    workspaceId: c.workspaceId,
+    name: c.name,
+    createdAt: c.createdAt,
+    documentCount: c._count?.documents,
+  };
+}
+
+type RawMember = {
+  id: string;
+  role: Role;
+  joinedAt: string;
+  user: { id: string; email: string; name: string | null; avatarUrl: string | null };
+};
+
+function mapMember(m: RawMember, workspaceId: string): WorkspaceMember {
+  return {
+    id: m.id,
+    userId: m.user.id, // backend omits userId; derive from the included user
+    workspaceId,
+    role: m.role,
+    joinedAt: m.joinedAt,
+    user: m.user,
+  };
+}
 
 export const realApi: Api = {
   auth: {
@@ -53,22 +109,55 @@ export const realApi: Api = {
   },
 
   workspaces: {
-    list: () => http.get<Workspace[]>("/workspaces"),
-    get: (id) => http.get<Workspace>(`/workspaces/${enc(id)}`),
-    create: (p) => http.post<Workspace>("/workspaces", p),
-    update: (id, p) => http.patch<Workspace>(`/workspaces/${enc(id)}`, p),
+    async list() {
+      const raw = await http.get<RawWorkspace[]>("/workspaces");
+      return raw.map(mapWorkspace);
+    },
+    async get(id) {
+      // getById omits the caller's role, so resolve it from the list (which
+      // includes role + counts). Fall back to the canonical fetch if missing.
+      const list = await http.get<RawWorkspace[]>("/workspaces");
+      const found = list.find((w) => w.id === id);
+      if (found) return mapWorkspace(found);
+      return mapWorkspace(await http.get<RawWorkspace>(`/workspaces/${enc(id)}`));
+    },
+    async create(p) {
+      const raw = await http.post<RawWorkspace>("/workspaces", p);
+      return {
+        ...mapWorkspace(raw),
+        memberCount: raw._count?.members ?? 1,
+        documentCount: raw._count?.documents ?? 0,
+      };
+    },
+    async update(id, p) {
+      return mapWorkspace(await http.patch<RawWorkspace>(`/workspaces/${enc(id)}`, p));
+    },
     remove: (id) => http.del<void>(`/workspaces/${enc(id)}`),
-    members: (id) => http.get<WorkspaceMember[]>(`/workspaces/${enc(id)}/members`),
+    async members(id) {
+      const raw = await http.get<RawMember[]>(`/workspaces/${enc(id)}/members`);
+      return raw.map((m) => mapMember(m, id));
+    },
     invite: (id, p) => http.post<{ ok: true }>(`/workspaces/${enc(id)}/invite`, p),
+    removeMember: (id, userId) =>
+      http.del<void>(`/workspaces/${enc(id)}/members/${enc(userId)}`),
     leave: (id) => http.post<void>(`/workspaces/${enc(id)}/leave`),
   },
 
   collections: {
-    list: (ws) => http.get<Collection[]>(`/workspaces/${enc(ws)}/collections`),
-    create: (ws, name) =>
-      http.post<Collection>(`/workspaces/${enc(ws)}/collections`, { name }),
-    update: (ws, id, name) =>
-      http.patch<Collection>(`/workspaces/${enc(ws)}/collections/${enc(id)}`, { name }),
+    async list(ws) {
+      const raw = await http.get<RawCollection[]>(`/workspaces/${enc(ws)}/collections`);
+      return raw.map(mapCollection);
+    },
+    async create(ws, name) {
+      return mapCollection(
+        await http.post<RawCollection>(`/workspaces/${enc(ws)}/collections`, { name }),
+      );
+    },
+    async update(ws, id, name) {
+      return mapCollection(
+        await http.patch<RawCollection>(`/workspaces/${enc(ws)}/collections/${enc(id)}`, { name }),
+      );
+    },
     remove: (ws, id) => http.del<void>(`/workspaces/${enc(ws)}/collections/${enc(id)}`),
   },
 

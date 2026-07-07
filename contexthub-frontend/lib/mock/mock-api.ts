@@ -204,6 +204,10 @@ export const mockApi: Api = {
       list.push({ id: uid("m"), userId: uid("u"), workspaceId: id, role: p.role, joinedAt: nowIso(), user: { id: uid("u"), email: p.email, name: null, avatarUrl: null } });
       return { ok: true };
     },
+    async removeMember(id, userId) {
+      await sleep(300);
+      db.members[id] = (db.members[id] ?? []).filter((m) => m.userId !== userId);
+    },
     async leave(id) {
       await sleep(300);
       db.workspaces = db.workspaces.filter((w) => w.id !== id);

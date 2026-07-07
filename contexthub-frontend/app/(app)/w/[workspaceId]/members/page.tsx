@@ -40,9 +40,11 @@ export default function MembersPage() {
     if (!toRemove) return;
     setRemoving(true);
     try {
-      // Backend: DELETE /workspaces/:id/members/:userId (owner/admin).
+      await api.workspaces.removeMember(workspaceId, toRemove.userId);
       setData((prev) => (prev ?? []).filter((m) => m.id !== toRemove.id));
       toast("success", "Member removed");
+    } catch {
+      toast("error", "Couldn't remove member");
     } finally {
       setRemoving(false);
       setToRemove(null);

@@ -23,3 +23,12 @@ export const REAL_AUTH =
 
 /** True when auth is served by the mock (used to gate demo prefills). */
 export const AUTH_IS_MOCK = !REAL_AUTH;
+
+/**
+ * Force workspaces + collections + members to use the real backend even when
+ * USE_MOCKS is true. (These three are interdependent — the workspace shell
+ * loads collections for the current workspace — so they flip together.)
+ */
+export const REAL_WORKSPACES =
+  !USE_MOCKS ||
+  (process.env.NEXT_PUBLIC_REAL_WORKSPACES ?? "false").toLowerCase() === "true";

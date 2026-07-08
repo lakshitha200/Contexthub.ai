@@ -246,7 +246,7 @@ export const mockApi: Api = {
         .filter((d) => d.workspaceId === ws && d.collectionId === col && (!status || d.status === status))
         .map((d) => ({ ...d }));
     },
-    async get(ws, id) {
+    async get(ws, _col, id) {
       await sleep(150);
       const d = db.documents.find((x) => x.workspaceId === ws && x.id === id);
       if (!d) throw new ApiError(404, "Document not found");
@@ -273,7 +273,7 @@ export const mockApi: Api = {
       simulateProcessing(d.id);
       return { ...d };
     },
-    async reprocess(ws, id) {
+    async reprocess(ws, _col, id) {
       await sleep(400);
       const d = db.documents.find((x) => x.id === id);
       if (!d) throw new ApiError(404, "Document not found");
@@ -281,14 +281,21 @@ export const mockApi: Api = {
       d.errorMessage = null;
       d.updatedAt = nowIso();
       simulateProcessing(d.id);
-      return { ...d };
     },
-    async remove(ws, id) {
+    async remove(ws, _col, id) {
       await sleep(300);
       db.documents = db.documents.filter((d) => d.id !== id);
     },
-    downloadUrl() {
-      return "#";
+    async download(_ws, _col, _id, filename) {
+      await sleep(200);
+      // Mock: produce a small placeholder file so the download UX works offline.
+      const blob = new Blob([`Mock file: ${filename}\n`], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
     },
   },
 

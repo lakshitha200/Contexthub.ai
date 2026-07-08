@@ -7,7 +7,7 @@ import { FileTypeIcon } from "@/components/documents/file-icon";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useWorkspace } from "@/lib/store/workspace-context";
 import type { Collection, Document } from "@/lib/types";
 import { cn, colorFromString, formatBytes } from "@/lib/utils";
@@ -47,8 +47,9 @@ export function UploadModal({
         const doc = await api.documents.upload(workspaceId, collectionId, file);
         onUploaded(doc);
         ok++;
-      } catch {
-        toast("error", `Failed to upload ${file.name}`);
+      } catch (err) {
+        const reason = err instanceof ApiError ? err.message : "Upload failed";
+        toast("error", `Couldn't upload ${file.name}`, reason);
       }
     }
     setUploading(false);
@@ -58,7 +59,7 @@ export function UploadModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Upload documents" description="PDF, Word, Markdown, or spreadsheets. They'll be parsed and embedded automatically." className="max-w-lg">
+    <Modal open={open} onClose={onClose} title="Upload documents" description="PDF, Word, Markdown, HTML, CSV, JSON or text. They'll be parsed and embedded automatically." className="max-w-lg">
       <div className="mt-4 space-y-4">
         {collections.length > 1 && (
           <div>
@@ -107,7 +108,7 @@ export function UploadModal({
             multiple
             hidden
             onChange={(e) => addFiles(e.target.files)}
-            accept=".pdf,.doc,.docx,.md,.markdown,.txt,.csv,.xlsx"
+            accept=".pdf,.doc,.docx,.md,.markdown,.txt,.html,.csv,.json"
           />
         </div>
 

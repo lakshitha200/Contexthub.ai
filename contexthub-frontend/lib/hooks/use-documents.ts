@@ -42,7 +42,9 @@ export function useDocuments(
     }
     pollRef.current = window.setTimeout(async () => {
       const updates = await Promise.all(
-        processing.map((d) => api.documents.get(workspaceId, d.id).catch(() => d)),
+        processing.map((d) =>
+          api.documents.get(workspaceId, d.collectionId, d.id).catch(() => d),
+        ),
       );
       setDocuments((prev) => prev.map((d) => updates.find((u) => u.id === d.id) ?? d));
     }, 2200);

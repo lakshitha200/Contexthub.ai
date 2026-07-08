@@ -48,11 +48,12 @@ export interface Api {
   };
   documents: {
     list(workspaceId: string, collectionId: string, status?: DocStatus): Promise<Document[]>;
-    get(workspaceId: string, id: string): Promise<Document>;
+    get(workspaceId: string, collectionId: string, id: string): Promise<Document>;
     upload(workspaceId: string, collectionId: string, file: File): Promise<Document>;
-    reprocess(workspaceId: string, id: string): Promise<Document>;
-    remove(workspaceId: string, id: string): Promise<void>;
-    downloadUrl(workspaceId: string, id: string): string;
+    reprocess(workspaceId: string, collectionId: string, id: string): Promise<void>;
+    remove(workspaceId: string, collectionId: string, id: string): Promise<void>;
+    /** Authenticated download — fetches the blob and saves it in the browser. */
+    download(workspaceId: string, collectionId: string, id: string, filename: string): Promise<void>;
   };
   chat: {
     listConversations(workspaceId: string): Promise<Conversation[]>;

@@ -32,3 +32,11 @@ export const AUTH_IS_MOCK = !REAL_AUTH;
 export const REAL_WORKSPACES =
   !USE_MOCKS ||
   (process.env.NEXT_PUBLIC_REAL_WORKSPACES ?? "false").toLowerCase() === "true";
+
+/**
+ * Force documents + storage (upload, list, status polling, download, delete,
+ * reprocess) to use the real backend even when USE_MOCKS is true.
+ */
+export const REAL_DOCUMENTS =
+  !USE_MOCKS ||
+  (process.env.NEXT_PUBLIC_REAL_DOCUMENTS ?? "false").toLowerCase() === "true";

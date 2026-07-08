@@ -92,8 +92,26 @@ async function raw<T>(path: string, opts: FetchOpts, retry = true): Promise<T> {
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
+/** GET a binary response (file download) with the Bearer token + one refresh. */
+async function rawBlob(path: string, retry = true): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  if (tokenStore.access) headers.Authorization = `Bearer ${tokenStore.access}`;
+
+  const res = await fetch(`${API_BASE_URL}${path}`, { headers });
+
+  if (res.status === 401 && retry && tokenStore.refresh) {
+    refreshing ??= doRefresh().finally(() => (refreshing = null));
+    const ok = await refreshing;
+    if (ok) return rawBlob(path, false);
+    tokenStore.clear();
+  }
+  if (!res.ok) throw new ApiError(res.status, res.statusText);
+  return res.blob();
+}
+
 export const http = {
   get: <T>(path: string, opts?: FetchOpts) => raw<T>(path, { ...opts, method: "GET" }),
+  getBlob: (path: string) => rawBlob(path),
   post: <T>(path: string, body?: unknown, opts?: FetchOpts) =>
     raw<T>(path, { ...opts, method: "POST", body }),
   patch: <T>(path: string, body?: unknown, opts?: FetchOpts) =>

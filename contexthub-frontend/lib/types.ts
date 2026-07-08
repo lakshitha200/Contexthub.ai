@@ -115,6 +115,8 @@ export interface Message {
   createdAt: string;
   /** Client-only: true while an assistant reply is streaming in. */
   pending?: boolean;
+  /** Client-only: the answer request failed (renders an inline error bubble). */
+  error?: boolean;
 }
 
 export interface Conversation {

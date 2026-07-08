@@ -58,8 +58,3 @@ export function colorFromString(input: string): string {
   for (let i = 0; i < input.length; i++) hash = input.charCodeAt(i) + ((hash << 5) - hash);
   return palette[Math.abs(hash) % palette.length];
 }
-
-/** Small promise delay (used by the mock layer to simulate latency). */
-export function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}

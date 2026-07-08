@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
+import { AlertCircle, RotateCw } from "lucide-react";
 import { CitationsList } from "@/components/chat/citations";
 import { MessageContent } from "@/components/chat/message-content";
 import { TypingDots, useTypewriter } from "@/components/chat/typewriter";
@@ -14,11 +15,13 @@ export function MessageBubble({
   animate,
   onCite,
   onScroll,
+  onRetry,
 }: {
   message: Message;
   animate?: boolean;
   onCite: (c: Citation) => void;
   onScroll?: () => void;
+  onRetry?: () => void;
 }) {
   const user = useAuthStore((s) => s.user);
 
@@ -38,7 +41,9 @@ export function MessageBubble({
     );
   }
 
-  return <AssistantBubble message={message} animate={animate} onCite={onCite} onScroll={onScroll} />;
+  return (
+    <AssistantBubble message={message} animate={animate} onCite={onCite} onScroll={onScroll} onRetry={onRetry} />
+  );
 }
 
 function AssistantBubble({
@@ -46,13 +51,19 @@ function AssistantBubble({
   animate,
   onCite,
   onScroll,
+  onRetry,
 }: {
   message: Message;
   animate?: boolean;
   onCite: (c: Citation) => void;
   onScroll?: () => void;
+  onRetry?: () => void;
 }) {
-  const { shown, done } = useTypewriter(message.content, !!animate && !message.pending, onScroll);
+  const { shown, done } = useTypewriter(
+    message.content,
+    !!animate && !message.pending && !message.error,
+    onScroll,
+  );
 
   return (
     <motion.div
@@ -68,6 +79,25 @@ function AssistantBubble({
         {message.pending ? (
           <div className="rounded-2xl rounded-tl-md border border-border bg-card px-4 py-3 shadow-soft">
             <TypingDots />
+          </div>
+        ) : message.error ? (
+          <div className="rounded-2xl rounded-tl-md border border-danger/30 bg-danger/5 px-4 py-3">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
+              <div>
+                <p className="text-sm text-foreground/90">
+                  I couldn&apos;t generate an answer. The server may be busy or unreachable.
+                </p>
+                {onRetry && (
+                  <button
+                    onClick={onRetry}
+                    className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs font-medium transition-colors hover:bg-secondary"
+                  >
+                    <RotateCw className="h-3.5 w-3.5" /> Try again
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         ) : (
           <div className="rounded-2xl rounded-tl-md border border-border bg-card px-4 py-3 shadow-soft">

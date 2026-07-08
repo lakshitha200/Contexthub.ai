@@ -13,7 +13,6 @@ import type {
   WorkspaceMember,
 } from "../types";
 import type { Role } from "../types";
-import { API_BASE_URL } from "./config";
 import type { Api } from "./contract";
 import { http } from "./http";
 
@@ -162,15 +161,17 @@ export const realApi: Api = {
   },
 
   documents: {
+    // All document routes are nested under the collection.
     list: (ws, col, status) =>
       http.get<Document[]>(
         `/workspaces/${enc(ws)}/collections/${enc(col)}/documents${
           status ? `?status=${status}` : ""
         }`,
       ),
-    get: (ws, id) =>
-      // documentId is unique; backend resolves collection internally on this route.
-      http.get<Document>(`/workspaces/${enc(ws)}/documents/${enc(id)}`),
+    get: (ws, col, id) =>
+      http.get<Document>(
+        `/workspaces/${enc(ws)}/collections/${enc(col)}/documents/${enc(id)}`,
+      ),
     upload: (ws, col, file) => {
       const form = new FormData();
       form.append("file", file);
@@ -179,11 +180,26 @@ export const realApi: Api = {
         form,
       );
     },
-    reprocess: (ws, id) =>
-      http.post<Document>(`/workspaces/${enc(ws)}/documents/${enc(id)}/reprocess`),
-    remove: (ws, id) => http.del<void>(`/workspaces/${enc(ws)}/documents/${enc(id)}`),
-    downloadUrl: (ws, id) =>
-      `${API_BASE_URL}/workspaces/${enc(ws)}/documents/${enc(id)}/download`,
+    reprocess: async (ws, col, id) => {
+      await http.post<{ success: true }>(
+        `/workspaces/${enc(ws)}/collections/${enc(col)}/documents/${enc(id)}/reprocess`,
+      );
+    },
+    remove: (ws, col, id) =>
+      http.del<void>(`/workspaces/${enc(ws)}/collections/${enc(col)}/documents/${enc(id)}`),
+    async download(ws, col, id, filename) {
+      const blob = await http.getBlob(
+        `/workspaces/${enc(ws)}/collections/${enc(col)}/documents/${enc(id)}/download`,
+      );
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
   },
 
   chat: {

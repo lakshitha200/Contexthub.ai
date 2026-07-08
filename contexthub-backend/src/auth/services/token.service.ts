@@ -1,6 +1,6 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
+import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TokensResponseDto } from '../dto/tokens.dto';
@@ -91,7 +91,7 @@ export class TokenService {
     return this.jwt.signAsync(payload, {
       secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
       expiresIn: this.config.get<string>('JWT_ACCESS_EXPIRES_IN', '15m'),
-    });
+    } as JwtSignOptions);
   }
 
   private signRefresh(userId: string, email: string, jti: string) {
@@ -99,7 +99,7 @@ export class TokenService {
     return this.jwt.signAsync(payload, {
       secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
       expiresIn: this.config.get<string>('JWT_REFRESH_EXPIRES_IN', '7d'),
-    });
+    } as JwtSignOptions);
   }
 
   private refreshExpiryDate(): Date {

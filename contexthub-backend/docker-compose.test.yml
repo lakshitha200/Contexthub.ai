@@ -1,0 +1,28 @@
+# Throwaway Postgres for e2e/integration tests.
+# Start:  docker compose -f docker-compose.test.yml up -d
+# Stop:   docker compose -f docker-compose.test.yml down
+# (add -v to `down` to also wipe data: docker compose ... down -v)
+
+services:
+  test-db:
+    image: pgvector/pgvector:pg16 # Postgres 16 + pgvector (needed later for RAG)
+    container_name: contexthub-test-db
+
+    ports:
+      - "5433:5432" # host 5433 -> container 5432 (avoids clashing with a local Postgres)
+
+    environment:
+      POSTGRES_USER: qa
+      POSTGRES_PASSWORD: qa
+      POSTGRES_DB: contexthub_test
+
+    # No named volume on purpose: a test DB should be disposable.
+    # Data lives only for the container's lifetime.
+
+    # Lets `docker compose up --wait` (and CI) block until the DB is actually
+    # accepting connections, so migrations/tests never start too early.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qa -d contexthub_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 10

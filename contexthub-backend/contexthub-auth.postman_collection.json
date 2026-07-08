@@ -1,0 +1,426 @@
+{
+  "info": {
+    "name": "ContextHub AI — Auth",
+    "_postman_id": "c0ffee00-auth-4d27-b1ce-ctxhubauth001",
+    "description": "Full auth API for ContextHub AI backend.\n\n## Setup\n1. Start the backend: `npm run start:dev` (runs on http://localhost:3000)\n2. Select the **ContextHub Local** environment, or just use the collection variables (defaults are pre-filled).\n3. Run **Register** or **Login** first — they auto-save `accessToken` and `refreshToken` into collection variables. Every protected request uses them automatically.\n\n## Auth model\n- Access token → sent as `Authorization: Bearer {{accessToken}}` (collection-level default).\n- Refresh token → sent in the JSON body as `refreshToken` (this is what the backend's refresh strategy expects).\n- Public endpoints (register, login, refresh, magic-link, google) override auth to **No Auth**.\n\nBase path is `/api/v1` (set via `setGlobalPrefix` in main.ts).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Shared helper: pull tokens out of an auth response and persist them.",
+          "pm.environment = pm.environment;"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000/api/v1", "type": "string" },
+    { "key": "accessToken", "value": "", "type": "string" },
+    { "key": "refreshToken", "value": "", "type": "string" },
+    { "key": "testEmail", "value": "alice@example.com", "type": "string" },
+    { "key": "testPassword", "value": "Pass1234", "type": "string" },
+    { "key": "magicLinkToken", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Register",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{testEmail}}\",\n  \"password\": \"{{testPassword}}\",\n  \"name\": \"Alice\"\n}"
+        },
+        "description": "Public. Creates an email/password user and returns `{ user, tokens }`. Password rules: 8–72 chars, at least one letter and one number."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status is 201', () => pm.response.code === 201);",
+              "const body = pm.response.json();",
+              "if (body.tokens) {",
+              "  pm.collectionVariables.set('accessToken', body.tokens.accessToken);",
+              "  pm.collectionVariables.set('refreshToken', body.tokens.refreshToken);",
+              "  console.log('Saved access + refresh tokens from Register.');",
+              "}",
+              "pm.test('response has user + tokens', () => {",
+              "  pm.expect(body).to.have.property('user');",
+              "  pm.expect(body).to.have.property('tokens');",
+              "  pm.expect(body.user).to.not.have.property('passwordHash');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Login",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "login"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{testEmail}}\",\n  \"password\": \"{{testPassword}}\"\n}"
+        },
+        "description": "Public. Returns `{ user, tokens }` on valid credentials, 401 otherwise."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status is 200', () => pm.response.code === 200);",
+              "const body = pm.response.json();",
+              "if (body.tokens) {",
+              "  pm.collectionVariables.set('accessToken', body.tokens.accessToken);",
+              "  pm.collectionVariables.set('refreshToken', body.tokens.refreshToken);",
+              "  console.log('Saved access + refresh tokens from Login.');",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Refresh Tokens",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/auth/refresh",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "refresh"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+        },
+        "description": "Public route guarded by JwtRefreshGuard. The refresh token is read from the JSON body field `refreshToken` (ExtractJwt.fromBodyField). Returns a fresh token pair; the old refresh token is revoked (rotation)."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status is 200', () => pm.response.code === 200);",
+              "const body = pm.response.json();",
+              "if (body.accessToken && body.refreshToken) {",
+              "  pm.collectionVariables.set('accessToken', body.accessToken);",
+              "  pm.collectionVariables.set('refreshToken', body.refreshToken);",
+              "  console.log('Rotated tokens saved.');",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get Me",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/auth/me",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "me"]
+        },
+        "description": "Protected. Uses `Authorization: Bearer {{accessToken}}` (collection default). Returns the current user profile."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status is 200', () => pm.response.code === 200);",
+              "pm.test('no password hash leaked', () => {",
+              "  pm.expect(pm.response.json()).to.not.have.property('passwordHash');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Update Profile",
+      "request": {
+        "method": "PATCH",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/auth/me",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "me"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Alice B\",\n  \"avatarUrl\": \"https://example.com/avatar.png\"\n}"
+        },
+        "description": "Protected. Both fields optional. `avatarUrl` must be a valid URL (class-validator @IsUrl)."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": ["pm.test('status is 200', () => pm.response.code === 200);"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Change Password",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/auth/change-password",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "change-password"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"currentPassword\": \"{{testPassword}}\",\n  \"newPassword\": \"NewPass1234\"\n}"
+        },
+        "description": "Protected. Verifies current password, sets the new one, and revokes ALL refresh tokens for the user (you must log in again after this). New password rules: 8–72 chars, one letter + one number."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status is 200', () => pm.response.code === 200);",
+              "pm.test('returns success', () => {",
+              "  pm.expect(pm.response.json()).to.have.property('success', true);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Logout",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/auth/logout",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "logout"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+        },
+        "description": "Protected (needs a valid access token) + revokes the supplied refresh token. After this, Refresh Tokens with the same token returns 401."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status is 200', () => pm.response.code === 200);",
+              "pm.collectionVariables.set('accessToken', '');",
+              "pm.collectionVariables.set('refreshToken', '');",
+              "console.log('Cleared local tokens after logout.');"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Magic Link — Request",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/auth/magic-link/request",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "magic-link", "request"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{testEmail}}\",\n  \"name\": \"Alice\"\n}"
+        },
+        "description": "Public. Creates (or reuses) a user and emails a magic link. In dev, MailService just logs the link to the backend console. Copy the `token` query param from that logged URL into the `magicLinkToken` collection variable, then run **Magic Link — Verify**."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status is 200', () => pm.response.code === 200);",
+              "console.log('Check the backend console for the magic link URL, copy its ?token= value into the magicLinkToken variable.');"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Magic Link — Verify",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/auth/magic-link/verify?token={{magicLinkToken}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "magic-link", "verify"],
+          "query": [{ "key": "token", "value": "{{magicLinkToken}}" }]
+        },
+        "description": "Public. Consumes the one-time magic link token, marks the email verified, and returns `{ user, tokens }`. Token is single-use and expires (default 15 min)."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status is 200', () => pm.response.code === 200);",
+              "const body = pm.response.json();",
+              "if (body.tokens) {",
+              "  pm.collectionVariables.set('accessToken', body.tokens.accessToken);",
+              "  pm.collectionVariables.set('refreshToken', body.tokens.refreshToken);",
+              "  console.log('Saved tokens from magic link verify.');",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Google — Start (open in browser)",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/auth/google",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "google"]
+        },
+        "description": "Public. OAuth2 redirect flow — open this URL in a real browser, not Postman. It redirects to Google, then back to `/auth/google/callback`, which finally redirects to `WEB_URL/auth/callback?accessToken=...&refreshToken=...`. Postman cannot complete the Google consent screen."
+      }
+    },
+    {
+      "name": "Google — Callback (browser only)",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/auth/google/callback",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "google", "callback"]
+        },
+        "description": "Public. Google redirects here after consent. Handled by the browser during the OAuth flow — included for documentation only. Returns a 302 redirect to the frontend with tokens in the query string."
+      }
+    },
+    {
+      "name": "Negative — Login wrong password",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "login"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{testEmail}}\",\n  \"password\": \"definitely-wrong\"\n}"
+        },
+        "description": "Sanity check: invalid credentials must return 401 with a generic message."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": ["pm.test('status is 401', () => pm.response.code === 401);"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Negative — Me without token",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/auth/me",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "me"]
+        },
+        "description": "Sanity check: protected route without a Bearer token must return 401."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": ["pm.test('status is 401', () => pm.response.code === 401);"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Negative — Register invalid email",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"not-an-email\",\n  \"password\": \"short\"\n}"
+        },
+        "description": "Sanity check: ValidationPipe (whitelist + forbidNonWhitelisted) must reject this with 400 and validation messages."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": ["pm.test('status is 400', () => pm.response.code === 400);"]
+          }
+        }
+      ]
+    }
+  ]
+}

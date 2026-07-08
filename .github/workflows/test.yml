@@ -1,0 +1,90 @@
+# GitHub Actions workflow that runs backend e2e tests on every push & PR.
+# Lives at .github/workflows/test.yml — GitHub auto-discovers anything under .github/workflows.
+
+name: Backend Tests
+
+# When this workflow runs.
+on:
+  # Every push to ANY branch — catches issues early on feature branches.
+  push:
+  # Every PR opened/updated against these target branches — blocks bad merges.
+  pull_request:
+    branches: [main, development]
+
+jobs:
+  # A "job" is one isolated unit of work. We have just one: run e2e tests.
+  e2e:
+    name: Backend e2e
+    # Fresh Ubuntu VM, spun up from scratch for every run (Docker pre-installed).
+    runs-on: ubuntu-latest
+
+    # Every `run:` below executes from contexthub-backend/, so we don't have to cd each time.
+    defaults:
+      run:
+        working-directory: contexthub-backend
+
+    # Steps run in order; if any step fails, later ones are skipped
+    # (unless they have `if: always()` like the teardown).
+    steps:
+      # Pull the repo onto the VM. Without this the VM has no code.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Install Node.js. `cache: npm` caches ~/.npm between runs to speed up `npm ci`.
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: contexthub-backend/package-lock.json
+
+      # `npm ci` = clean install from package-lock.json. Faster + reproducible vs `npm install`.
+      - name: Install dependencies
+        run: npm ci
+
+      # The generated/ folder is gitignored, so CI must generate the Prisma client itself.
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      # Try to restore the pgvector image from GitHub's cache (~300 MB).
+      # Key includes the image tag, so bumping the tag invalidates the cache.
+      - name: Restore Docker image cache
+        id: docker-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/docker-cache
+          key: docker-pgvector-pg16
+
+      # Cache hit → load the tarball into the local Docker daemon, no network pull.
+      - name: Load cached Docker image
+        if: steps.docker-cache.outputs.cache-hit == 'true'
+        run: docker load -i ~/docker-cache/pgvector-pg16.tar
+
+      # Cache miss → pull from Docker Hub, then save a tarball for next time.
+      - name: Pull and save Docker image
+        if: steps.docker-cache.outputs.cache-hit != 'true'
+        run: |
+          docker pull pgvector/pgvector:pg16
+          mkdir -p ~/docker-cache
+          docker save pgvector/pgvector:pg16 -o ~/docker-cache/pgvector-pg16.tar
+
+      # Boots the Postgres + pgvector container from docker-compose.test.yml.
+      # Uses the local image now (either cache-loaded or just-pulled), no extra network call.
+      # `--wait` (inside the script) blocks until the DB healthcheck passes.
+      - name: Start test database
+        run: npm run test:e2e:db:up
+
+      # Runs `prisma migrate deploy` against the test DB to create all tables.
+      - name: Run Prisma migrations
+        run: npm run test:e2e:migrate
+
+      # The actual tests. dotenv-cli loads .env.test, then Jest runs the e2e specs.
+      # If any test fails, this step exits non-zero → the whole job fails → red ✗ on GitHub.
+      - name: Run e2e tests
+        run: npm run test:e2e
+
+      # `if: always()` makes this run even if tests failed, so we never leave
+      # the Docker container running on the VM (cleanup hygiene).
+      - name: Stop test database
+        if: always()
+        run: npm run test:e2e:db:down

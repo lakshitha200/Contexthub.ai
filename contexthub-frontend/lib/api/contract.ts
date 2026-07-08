@@ -1,4 +1,4 @@
-/** The API surface the UI depends on. Real + mock both implement this. */
+/** The API surface the UI depends on, implemented by the real backend client. */
 import type {
   AskPayload,
   AskResponse,

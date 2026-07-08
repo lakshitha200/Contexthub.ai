@@ -53,9 +53,48 @@ function ConversationView({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: smooth ? "smooth" : "auto" });
   }, []);
 
-  const send = useCallback(
+  // Sends `text` to the RAG endpoint. Renders an inline error bubble on failure
+  // (no user message is appended here — that's the caller's job).
+  const runAsk = useCallback(
     async (text: string) => {
       setBusy(true);
+      const pendingId = `pending_${Date.now()}`;
+      const pending: Message = {
+        id: pendingId,
+        conversationId,
+        role: "ASSISTANT",
+        content: "",
+        citations: null,
+        createdAt: new Date().toISOString(),
+        pending: true,
+      };
+      // Drop any prior error bubble, then show the typing indicator.
+      setMessages((m) => [...m.filter((x) => !x.error), pending]);
+      requestAnimationFrame(() => scrollToBottom());
+
+      try {
+        const { message } = await api.chat.ask(workspaceId, conversationId, { content: text });
+        setMessages((m) => m.filter((x) => x.id !== pendingId).concat(message));
+        setAnimateId(message.id);
+        // Refresh conversation meta (title may have been set on first turn).
+        const conv = await api.chat.getConversation(workspaceId, conversationId);
+        setConversation(conv);
+        upsert(conv);
+      } catch {
+        setMessages((m) =>
+          m.map((x) =>
+            x.id === pendingId ? { ...x, pending: false, error: true, content: "" } : x,
+          ),
+        );
+      } finally {
+        setBusy(false);
+      }
+    },
+    [workspaceId, conversationId, scrollToBottom, upsert],
+  );
+
+  const send = useCallback(
+    (text: string) => {
       const tempUser: Message = {
         id: `tmp_${Date.now()}`,
         conversationId,
@@ -64,35 +103,17 @@ function ConversationView({
         citations: null,
         createdAt: new Date().toISOString(),
       };
-      const pending: Message = {
-        id: `pending_${Date.now()}`,
-        conversationId,
-        role: "ASSISTANT",
-        content: "",
-        citations: null,
-        createdAt: new Date().toISOString(),
-        pending: true,
-      };
-      setMessages((m) => [...m, tempUser, pending]);
-      requestAnimationFrame(() => scrollToBottom());
-
-      try {
-        const { message } = await api.chat.ask(workspaceId, conversationId, { content: text });
-        setMessages((m) => m.filter((x) => x.id !== pending.id).concat(message));
-        setAnimateId(message.id);
-        // Refresh conversation meta (title may have been set on first turn).
-        const conv = await api.chat.getConversation(workspaceId, conversationId);
-        setConversation(conv);
-        upsert(conv);
-      } catch {
-        setMessages((m) => m.filter((x) => x.id !== pending.id));
-        toast("error", "Couldn't get an answer", "Please try again.");
-      } finally {
-        setBusy(false);
-      }
+      setMessages((m) => [...m, tempUser]);
+      void runAsk(text);
     },
-    [workspaceId, conversationId, scrollToBottom, upsert, toast],
+    [conversationId, runAsk],
   );
+
+  // Retry the last question after an error (reuses the last user message).
+  const retry = useCallback(() => {
+    const lastUser = [...messages].reverse().find((m) => m.role === "USER");
+    if (lastUser) void runAsk(lastUser.content);
+  }, [messages, runAsk]);
 
   // Load the conversation.
   useEffect(() => {
@@ -166,6 +187,7 @@ function ConversationView({
                 animate={m.id === animateId}
                 onCite={setActiveCitation}
                 onScroll={() => scrollToBottom(false)}
+                onRetry={m.error ? retry : undefined}
               />
             ))
           )}

@@ -27,14 +27,25 @@ export class WorkspaceService {
   ) {}
 
   async create(userId: string, dto: CreateWorkspaceDto) {
-    const base = this.slugify(dto.name);
+    const name = dto.name.trim();
+
+    // A user can't have two workspaces with the same name (case-insensitive).
+    const existing = await this.prisma.workspaceMember.findFirst({
+      where: { userId, workspace: { name: { equals: name, mode: 'insensitive' } } },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new ConflictException(`You already have a workspace named "${name}".`);
+    }
+
+    const base = this.slugify(name);
 
     for (let attempt = 0; attempt < 5; attempt++) {
       const slug = attempt === 0 ? base : `${base}-${randomBytes(3).toString('hex')}`;
       try {
         return await this.prisma.workspace.create({
           data: {
-            name: dto.name,
+            name,
             slug,
             description: dto.description ?? null,
             members: {

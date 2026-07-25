@@ -7,6 +7,7 @@ import { useState } from "react";
 import { GoogleButton } from "@/components/auth/oauth-buttons";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { useToast } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api";
 import { useAuthStore } from "@/lib/store/auth-store";
@@ -15,7 +16,7 @@ export default function RegisterPage() {
   const router = useRouter();
   const toast = useToast();
   const register = useAuthStore((s) => s.register);
-  const [form, setForm] = useState({ name: "", email: "", password: "" });
+  const [form, setForm] = useState({ name: "", email: "", password: "", confirmPassword: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -27,6 +28,10 @@ export default function RegisterPage() {
     setError(undefined);
     if (form.password.length < 8 || !/[A-Za-z]/.test(form.password) || !/[0-9]/.test(form.password)) {
       setError("Password needs 8+ characters, with a letter and a number.");
+      return;
+    }
+    if (form.password !== form.confirmPassword) {
+      setError("Passwords don't match.");
       return;
     }
     setLoading(true);
@@ -69,8 +74,11 @@ export default function RegisterPage() {
         <Field label="Email">
           <Input type="email" placeholder="you@company.com" value={form.email} onChange={set("email")} required autoComplete="email" />
         </Field>
-        <Field label="Password" error={error} hint={!error ? "At least 8 characters, with a letter and a number." : undefined}>
-          <Input type="password" placeholder="••••••••" value={form.password} onChange={set("password")} required autoComplete="new-password" />
+        <Field label="Password" hint="At least 8 characters, with a letter and a number.">
+          <PasswordInput placeholder="••••••••" value={form.password} onChange={set("password")} required autoComplete="new-password" />
+        </Field>
+        <Field label="Confirm password" error={error}>
+          <PasswordInput placeholder="••••••••" value={form.confirmPassword} onChange={set("confirmPassword")} required autoComplete="new-password" />
         </Field>
         <Button type="submit" size="lg" className="w-full" loading={loading}>
           Create account

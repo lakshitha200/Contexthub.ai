@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import type { Workspace } from "@/lib/types";
 
 export function CreateWorkspaceModal({
@@ -33,8 +33,12 @@ export function CreateWorkspaceModal({
       setName("");
       setDescription("");
       onClose();
-    } catch {
-      toast("error", "Couldn't create workspace");
+    } catch (err) {
+      toast(
+        "error",
+        "Couldn't create workspace",
+        err instanceof ApiError ? err.message : undefined,
+      );
     } finally {
       setLoading(false);
     }

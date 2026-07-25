@@ -40,6 +40,12 @@ export interface AuthResponse {
   tokens: Tokens;
 }
 
+/** Registration no longer signs you in — you must verify your email first. */
+export interface RegisterResult {
+  verificationRequired: boolean;
+  email: string;
+}
+
 // ------------------------------------------------------------------
 // Workspace
 // ------------------------------------------------------------------

@@ -8,6 +8,7 @@ import type {
   ConversationWithMessages,
   Document,
   Message,
+  RegisterResult,
   User,
   Workspace,
   WorkspaceMember,
@@ -80,11 +81,9 @@ export const realApi: Api = {
       tokenStore.set(res.tokens);
       return res;
     },
-    async register(p) {
-      const res = await http.post<AuthResponse>("/auth/register", p, { anonymous: true });
-      tokenStore.set(res.tokens);
-      return res;
-    },
+    // Registration does NOT sign you in — it returns a "verify your email" result.
+    register: (p) =>
+      http.post<RegisterResult>("/auth/register", p, { anonymous: true }),
     me: () => http.get<User>("/auth/me"),
     updateProfile: (p) => http.patch<User>("/auth/me", p),
     async logout() {
@@ -95,11 +94,23 @@ export const realApi: Api = {
         tokenStore.clear();
       }
     },
-    requestMagicLink: (email, name) =>
-      http.post<void>("/auth/magic-link/request", { email, name }, { anonymous: true }),
-    async verifyMagicLink(token) {
-      const res = await http.get<AuthResponse>(
-        `/auth/magic-link/verify?token=${encodeURIComponent(token)}`,
+    async verifyEmail(token) {
+      const res = await http.post<AuthResponse>(
+        "/auth/verify-email",
+        { token },
+        { anonymous: true },
+      );
+      tokenStore.set(res.tokens);
+      return res;
+    },
+    resendVerification: (email) =>
+      http.post<void>("/auth/verify-email/resend", { email }, { anonymous: true }),
+    forgotPassword: (email) =>
+      http.post<void>("/auth/forgot-password", { email }, { anonymous: true }),
+    async resetPassword(token, newPassword) {
+      const res = await http.post<AuthResponse>(
+        "/auth/reset-password",
+        { token, newPassword },
         { anonymous: true },
       );
       tokenStore.set(res.tokens);

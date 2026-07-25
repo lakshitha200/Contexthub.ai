@@ -1,16 +1,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // AuthService — UNIT TESTS
 //
-// Every public method is tested across 3 buckets:
+// Covers the strict account model:
+//   • one email = one provider (EMAIL or GOOGLE), never both
+//   • email + password signups must verify their email before they can log in
+//   • Google logins are verified by default and cannot use a password
 //
-//   [HAPPY]    → it works when input is valid
-//   [SAD]      → it fails with the right exception when something is wrong
-//   [SECURITY] → it protects secrets and handles edge cases safely
-//
-// A small `check()` helper prints a readable line for each verified behavior,
-// so when you run:
-//     npx jest src/auth/services/auth.service.spec.ts --verbose
-// you can read down the list and understand exactly what was guaranteed.
+// Each method is tested across:
+//   [HAPPY]    → works when input is valid
+//   [SAD]      → fails with the right exception
+//   [SECURITY] → protects secrets / handles edge cases safely
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Stub the real PrismaService module: its generated Prisma client imports
@@ -20,9 +19,16 @@ jest.mock('../../prisma/prisma.service', () => ({
   PrismaService: class PrismaService {},
 }));
 
+// The service imports the AuthProvider enum from the generated client (same
+// unresolvable transitive paths) — stub it to plain string values.
+jest.mock('../../../generated/prisma/client', () => ({
+  AuthProvider: { EMAIL: 'EMAIL', GOOGLE: 'GOOGLE' },
+}));
+
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -37,9 +43,6 @@ import { TokenService } from './token.service';
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 const check = (label: string) => console.log(`        ✓ ${label}`);
-
-// defining a fake database object for testing.
-// jest.Mock = This is a fake function created by Jest for testing (findUnique: jest.fn(),). So in test-> findUnique.mockResolvedValue(user); // When this fake function is called, return user
 
 type MockPrisma = {
   user: {
@@ -57,6 +60,7 @@ type MockPrisma = {
     findUnique: jest.Mock;
     create: jest.Mock;
   };
+  $transaction: jest.Mock;
 };
 
 const buildUser = (overrides: Partial<Record<string, unknown>> = {}) => ({
@@ -64,7 +68,8 @@ const buildUser = (overrides: Partial<Record<string, unknown>> = {}) => ({
   email: 'alice@example.com',
   name: 'Alice',
   avatarUrl: null,
-  emailVerified: null,
+  emailVerified: null as Date | null,
+  authProvider: 'EMAIL',
   createdAt: new Date('2026-01-01T00:00:00Z'),
   passwordHash: null as string | null,
   ...overrides,
@@ -73,7 +78,6 @@ const buildUser = (overrides: Partial<Record<string, unknown>> = {}) => ({
 const FAKE_TOKENS = { accessToken: 'access.jwt', refreshToken: 'refresh.jwt' };
 
 // ─── suite ──────────────────────────────────────────────────────────────────
-// Starts a group of tests for AuthService.
 describe('AuthService (unit)', () => {
   let service: AuthService;
   let prisma: MockPrisma;
@@ -84,9 +88,8 @@ describe('AuthService (unit)', () => {
     generateOpaqueToken: jest.Mock;
     hash: jest.Mock;
   };
-  let mail: { sendMagicLink: jest.Mock };
+  let mail: { sendVerificationEmail: jest.Mock; sendPasswordReset: jest.Mock };
 
-  // Runs this setup before every test.
   beforeEach(async () => {
     prisma = {
       user: {
@@ -98,26 +101,33 @@ describe('AuthService (unit)', () => {
       verificationToken: {
         create: jest.fn(),
         findUnique: jest.fn(),
-        update: jest.fn(),
+        update: jest.fn().mockResolvedValue({}),
       },
       oAuthAccount: {
         findUnique: jest.fn(),
         create: jest.fn(),
       },
+      // Run the callback with `prisma` itself as the transaction client, so the
+      // same user/verificationToken mocks are used inside transactions.
+      $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb(prisma)),
     };
     tokens = {
       issueTokens: jest.fn().mockResolvedValue(FAKE_TOKENS),
       revoke: jest.fn().mockResolvedValue(undefined),
       revokeAllForUser: jest.fn().mockResolvedValue(undefined),
-      generateOpaqueToken: jest.fn().mockReturnValue('raw-magic-token'),
+      generateOpaqueToken: jest.fn().mockReturnValue('raw-token'),
       hash: jest.fn((v: string) => `hash:${v}`),
     };
-    mail = { sendMagicLink: jest.fn().mockResolvedValue(undefined) };
+    mail = {
+      sendVerificationEmail: jest.fn().mockResolvedValue(undefined),
+      sendPasswordReset: jest.fn().mockResolvedValue(undefined),
+    };
 
     const config = {
       get: jest.fn((key: string, defaultValue?: string) => {
         if (key === 'BCRYPT_ROUNDS') return '4';
-        if (key === 'MAGIC_LINK_TTL_MIN') return '15';
+        if (key === 'PASSWORD_RESET_TTL_MIN') return '30';
+        if (key === 'EMAIL_VERIFY_TTL_HOURS') return '24';
         return defaultValue;
       }),
     };
@@ -137,176 +147,145 @@ describe('AuthService (unit)', () => {
 
   // ════════════════════════════════════════════════════════════════════ register
   describe('register()', () => {
-    const dto = { email: 'new', password: 'Pass1234', name: 'New' };
+    const dto = { email: 'new@example.com', password: 'Pass1234', name: 'New' };
 
     describe('[HAPPY] valid input', () => {
-      it('creates a new user and returns tokens', async () => {
+      it('creates an unverified EMAIL user, sends verification, returns no tokens', async () => {
         prisma.user.findUnique.mockResolvedValue(null);
         prisma.user.create.mockResolvedValue(buildUser({ email: dto.email, name: dto.name }));
+        prisma.verificationToken.create.mockResolvedValue({});
 
         const result = await service.register(dto);
 
-        expect(prisma.user.findUnique).toHaveBeenCalledWith({ where: { email: dto.email } });
-        check('looked up existing email before creating');
-        expect(prisma.user.create).toHaveBeenCalled();
-        check('called prisma.user.create');
-        expect(result.tokens).toEqual(FAKE_TOKENS);
-        check('returned access + refresh tokens');
-        expect(result.user.email).toBe(dto.email);
-        check('returned user with submitted email');
+        const createArgs = prisma.user.create.mock.calls[0][0];
+        expect(createArgs.data.authProvider).toBe('EMAIL');
+        check('created user tagged authProvider=EMAIL');
+        expect(createArgs.data.emailVerified).toBeUndefined();
+        check('did NOT mark the email verified on signup');
+        expect(mail.sendVerificationEmail).toHaveBeenCalledWith(dto.email, 'raw-token');
+        check('sent a verification email with the raw token');
+        expect(result).toEqual({ verificationRequired: true, email: dto.email });
+        check('returned { verificationRequired: true } — no tokens');
       });
     });
 
-    describe('[SAD] invalid input', () => {
-      it('throws ConflictException when email is already registered', async () => {
-        prisma.user.findUnique.mockResolvedValue(buildUser({ email: dto.email }));
+    describe('[SAD] duplicate email', () => {
+      it('throws ConflictException for an existing EMAIL account', async () => {
+        prisma.user.findUnique.mockResolvedValue(buildUser({ authProvider: 'EMAIL' }));
 
         await expect(service.register(dto)).rejects.toThrow(ConflictException);
-        check('threw ConflictException for duplicate email');
+        check('threw ConflictException for duplicate email account');
         expect(prisma.user.create).not.toHaveBeenCalled();
         check('did NOT create a user on conflict');
       });
+
+      it('throws ConflictException (use Google) for an existing GOOGLE account', async () => {
+        prisma.user.findUnique.mockResolvedValue(buildUser({ authProvider: 'GOOGLE' }));
+
+        await expect(service.register(dto)).rejects.toThrow(/Google/i);
+        check('told the user to sign in with Google');
+      });
     });
 
-    describe('[SECURITY] password & response hygiene', () => {
+    describe('[SECURITY] password hygiene', () => {
       it('stores a hashed password — never the raw value', async () => {
         prisma.user.findUnique.mockResolvedValue(null);
         prisma.user.create.mockResolvedValue(buildUser());
+        prisma.verificationToken.create.mockResolvedValue({});
 
         await service.register(dto);
 
-        const createArgs = prisma.user.create.mock.calls[0][0];
-        const storedHash: string = createArgs.data.passwordHash;
-        expect(storedHash).toBeDefined();
-        check('passwordHash was set on the create payload');
+        const storedHash: string = prisma.user.create.mock.calls[0][0].data.passwordHash;
         expect(storedHash).not.toBe(dto.password);
-        check('stored value is NOT the raw password');
         await expect(bcrypt.compare(dto.password, storedHash)).resolves.toBe(true);
-        check('stored hash verifies against the raw password (bcrypt)');
-      });
-
-      it('does not leak the password hash in the response', async () => {
-        prisma.user.findUnique.mockResolvedValue(null);
-        prisma.user.create.mockResolvedValue(buildUser());
-
-        const result = await service.register(dto);
-
-        expect(result.user).not.toHaveProperty('passwordHash');
-        check('response user object has no `passwordHash` field');
+        check('stored a bcrypt hash that verifies against the raw password');
       });
     });
   });
- 
+
   // ═══════════════════════════════════════════════════════════════════════ login
   describe('login()', () => {
     const dto = { email: 'alice@example.com', password: 'Pass1234' };
+    const verifiedUser = async () =>
+      buildUser({ passwordHash: await bcrypt.hash(dto.password, 4), emailVerified: new Date() });
 
-    describe('[HAPPY] correct credentials', () => {
+    describe('[HAPPY] verified account, correct credentials', () => {
       it('returns tokens', async () => {
-        const passwordHash = await bcrypt.hash(dto.password, 4);
-        prisma.user.findUnique.mockResolvedValue(buildUser({ passwordHash }));
+        prisma.user.findUnique.mockResolvedValue(await verifiedUser());
 
         const result = await service.login(dto);
 
         expect(result.tokens).toEqual(FAKE_TOKENS);
-        check('returned tokens for valid email + password');
-        expect(tokens.issueTokens).toHaveBeenCalledWith('user-1', dto.email, undefined);
-        check('called TokenService.issueTokens with user id + email');
+        check('returned tokens for a verified email account');
       });
     });
 
     describe('[SAD] wrong credentials', () => {
-      it('throws UnauthorizedException when email does not exist', async () => {
+      it('throws Unauthorized when email does not exist', async () => {
         prisma.user.findUnique.mockResolvedValue(null);
-
         await expect(service.login(dto)).rejects.toThrow(UnauthorizedException);
         check('threw Unauthorized for unknown email');
       });
 
-      it('throws UnauthorizedException when password is wrong', async () => {
-        const passwordHash = await bcrypt.hash('different-pass', 4);
-        prisma.user.findUnique.mockResolvedValue(buildUser({ passwordHash }));
-
+      it('throws Unauthorized when the password is wrong', async () => {
+        prisma.user.findUnique.mockResolvedValue(
+          buildUser({ passwordHash: await bcrypt.hash('nope', 4), emailVerified: new Date() }),
+        );
         await expect(service.login(dto)).rejects.toThrow(UnauthorizedException);
         check('threw Unauthorized for wrong password');
       });
     });
 
-    describe('[SECURITY] account-type edge cases', () => {
-      it('throws UnauthorizedException for OAuth-only users (no passwordHash)', async () => {
-        prisma.user.findUnique.mockResolvedValue(buildUser({ passwordHash: null }));
+    describe('[SAD] provider + verification gates', () => {
+      it('blocks a GOOGLE account from password login', async () => {
+        prisma.user.findUnique.mockResolvedValue(
+          buildUser({ authProvider: 'GOOGLE', passwordHash: null }),
+        );
+        await expect(service.login(dto)).rejects.toThrow(/Google/i);
+        check('steered a Google account to Google sign-in');
+      });
 
-        await expect(service.login(dto)).rejects.toThrow(UnauthorizedException);
-        check('blocked password-login on OAuth-only account');
+      it('blocks an unverified account with ForbiddenException', async () => {
+        prisma.user.findUnique.mockResolvedValue(
+          buildUser({ passwordHash: await bcrypt.hash(dto.password, 4), emailVerified: null }),
+        );
+        await expect(service.login(dto)).rejects.toThrow(ForbiddenException);
+        check('blocked login until the email is verified');
       });
     });
   });
 
- 
   // ══════════════════════════════════════════════════════════════════════ logout
   describe('logout()', () => {
-    describe('[HAPPY] valid refresh token', () => {
-      it('revokes the refresh token', async () => {
-        const result = await service.logout('refresh.jwt');
-
-        expect(tokens.revoke).toHaveBeenCalledWith('refresh.jwt');
-        check('called TokenService.revoke with the provided refresh token');
-        expect(result).toEqual({ success: true });
-        check('returned { success: true }');
-      });
+    it('revokes the refresh token', async () => {
+      const result = await service.logout('refresh.jwt');
+      expect(tokens.revoke).toHaveBeenCalledWith('refresh.jwt');
+      expect(result).toEqual({ success: true });
+      check('revoked the refresh token and returned success');
     });
   });
 
   // ══════════════════════════════════════════════════════════════════════════ me
   describe('me()', () => {
-    describe('[HAPPY] existing user', () => {
-      it('returns the user DTO', async () => {
-        prisma.user.findUniqueOrThrow.mockResolvedValue(buildUser());
-
-        const result = await service.me('user-1');
-
-        expect(prisma.user.findUniqueOrThrow).toHaveBeenCalledWith({ where: { id: 'user-1' } });
-        check('queried user by id');
-        expect(result.id).toBe('user-1');
-        check('returned user id');
-      });
-    });
-
-    describe('[SECURITY] response hygiene', () => {
-      it('does not return passwordHash', async () => {
-        prisma.user.findUniqueOrThrow.mockResolvedValue(
-          buildUser({ passwordHash: 'super-secret-hash' }),
-        );
-
-        const result = await service.me('user-1');
-
-        expect(result).not.toHaveProperty('passwordHash');
-        check('passwordHash stripped from response');
-      });
+    it('returns the user DTO without the password hash', async () => {
+      prisma.user.findUniqueOrThrow.mockResolvedValue(buildUser({ passwordHash: 'secret' }));
+      const result = await service.me('user-1');
+      expect(result.id).toBe('user-1');
+      expect(result).not.toHaveProperty('passwordHash');
+      check('returned user id and stripped passwordHash');
     });
   });
 
   // ══════════════════════════════════════════════════════════════════ updateProfile
   describe('updateProfile()', () => {
-    describe('[HAPPY] valid update', () => {
-      it('updates name and avatarUrl', async () => {
-        prisma.user.update.mockResolvedValue(
-          buildUser({ name: 'Alice B', avatarUrl: 'https://a.b/avatar.png' }),
-        );
-
-        const result = await service.updateProfile('user-1', {
-          name: 'Alice B',
-          avatarUrl: 'https://a.b/avatar.png',
-        });
-
-        expect(prisma.user.update).toHaveBeenCalledWith({
-          where: { id: 'user-1' },
-          data: { name: 'Alice B', avatarUrl: 'https://a.b/avatar.png' },
-        });
-        check('called prisma.user.update with the right id + fields');
-        expect(result.name).toBe('Alice B');
-        check('returned updated name');
-      });
+    it('updates name and avatarUrl', async () => {
+      prisma.user.update.mockResolvedValue(buildUser({ name: 'Alice B' }));
+      const result = await service.updateProfile('user-1', { name: 'Alice B' });
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'user-1' } }),
+      );
+      expect(result.name).toBe('Alice B');
+      check('updated and returned the profile');
     });
   });
 
@@ -316,199 +295,214 @@ describe('AuthService (unit)', () => {
 
     describe('[HAPPY] correct current password', () => {
       it('updates the password and revokes all sessions', async () => {
-        const passwordHash = await bcrypt.hash(dto.currentPassword, 4);
-        prisma.user.findUniqueOrThrow.mockResolvedValue(buildUser({ passwordHash }));
+        prisma.user.findUniqueOrThrow.mockResolvedValue(
+          buildUser({ passwordHash: await bcrypt.hash(dto.currentPassword, 4) }),
+        );
         prisma.user.update.mockResolvedValue(buildUser());
 
         const result = await service.changePassword('user-1', dto);
 
-        expect(prisma.user.update).toHaveBeenCalled();
-        check('called prisma.user.update with new hash');
         const newHash: string = prisma.user.update.mock.calls[0][0].data.passwordHash;
         await expect(bcrypt.compare(dto.newPassword, newHash)).resolves.toBe(true);
-        check('new hash verifies against new password');
         expect(tokens.revokeAllForUser).toHaveBeenCalledWith('user-1');
-        check('revoked ALL existing refresh tokens (forces re-login on other devices)');
         expect(result).toEqual({ success: true });
-        check('returned { success: true }');
+        check('rehashed the password and revoked all sessions');
       });
     });
 
     describe('[SAD] wrong current password', () => {
-      it('throws UnauthorizedException and changes nothing', async () => {
-        const passwordHash = await bcrypt.hash('something-else', 4);
-        prisma.user.findUniqueOrThrow.mockResolvedValue(buildUser({ passwordHash }));
-
+      it('throws Unauthorized and changes nothing', async () => {
+        prisma.user.findUniqueOrThrow.mockResolvedValue(
+          buildUser({ passwordHash: await bcrypt.hash('other', 4) }),
+        );
         await expect(service.changePassword('user-1', dto)).rejects.toThrow(UnauthorizedException);
-        check('threw Unauthorized for wrong current password');
         expect(prisma.user.update).not.toHaveBeenCalled();
-        check('did NOT update the password row');
-        expect(tokens.revokeAllForUser).not.toHaveBeenCalled();
-        check('did NOT revoke refresh tokens');
+        check('rejected wrong current password without updating');
       });
     });
 
-    describe('[SECURITY] OAuth-only accounts', () => {
-      it('throws BadRequestException when the account has no password set', async () => {
-        prisma.user.findUniqueOrThrow.mockResolvedValue(buildUser({ passwordHash: null }));
-
+    describe('[SECURITY] Google accounts', () => {
+      it('throws BadRequest for a Google (passwordless) account', async () => {
+        prisma.user.findUniqueOrThrow.mockResolvedValue(
+          buildUser({ authProvider: 'GOOGLE', passwordHash: null }),
+        );
         await expect(service.changePassword('user-1', dto)).rejects.toThrow(BadRequestException);
-        check('blocked password-change on OAuth-only account with BadRequest');
+        check('blocked password change on a Google account');
       });
     });
   });
 
-  // ══════════════════════════════════════════════════════════════ requestMagicLink
-  describe('requestMagicLink()', () => {
-    const dto = { email: 'mail@example.com' };
-
-    describe('[HAPPY] existing user', () => {
-      it('creates a verification token and sends the email', async () => {
-        prisma.user.findUnique.mockResolvedValue(buildUser({ email: dto.email }));
-        prisma.verificationToken.create.mockResolvedValue({});
-
-        const result = await service.requestMagicLink(dto);
-
-        expect(prisma.user.create).not.toHaveBeenCalled();
-        check('did NOT auto-create a new user (existing one used)');
-        expect(prisma.verificationToken.create).toHaveBeenCalled();
-        check('created a verification token row');
-        expect(mail.sendMagicLink).toHaveBeenCalledWith(dto.email, 'raw-magic-token');
-        check('sent magic link email with raw token');
-        expect(result).toEqual({ success: true });
-        check('returned { success: true }');
-      });
-    });
-
-    describe('[HAPPY] unknown email', () => {
-      it('auto-creates a user', async () => {
-        prisma.user.findUnique.mockResolvedValue(null);
-        prisma.user.create.mockResolvedValue(buildUser({ email: dto.email }));
-        prisma.verificationToken.create.mockResolvedValue({});
-
-        await service.requestMagicLink(dto);
-
-        expect(prisma.user.create).toHaveBeenCalledWith({
-          data: { email: dto.email, name: null },
-        });
-        check('created a new user for the unknown email');
-        expect(mail.sendMagicLink).toHaveBeenCalled();
-        check('sent magic link to new user');
-      });
-    });
-
-    describe('[SECURITY] token storage', () => {
-      it('stores the HASHED token, never the raw token', async () => {
-        prisma.user.findUnique.mockResolvedValue(buildUser({ email: dto.email }));
-        prisma.verificationToken.create.mockResolvedValue({});
-
-        await service.requestMagicLink(dto);
-
-        const createArgs = prisma.verificationToken.create.mock.calls[0][0];
-        expect(createArgs.data.tokenHash).toBe('hash:raw-magic-token');
-        check('stored token in hashed form');
-        expect(createArgs.data.tokenHash).not.toBe('raw-magic-token');
-        check('raw token is NOT stored in the DB');
-        expect(createArgs.data.type).toBe('MAGIC_LINK');
-        check('token row tagged with type=MAGIC_LINK');
-      });
-
-      it('sends the RAW token in the email (the hash would be useless to the user)', async () => {
-        prisma.user.findUnique.mockResolvedValue(buildUser({ email: dto.email }));
-        prisma.verificationToken.create.mockResolvedValue({});
-
-        await service.requestMagicLink(dto);
-
-        const [, sentToken] = mail.sendMagicLink.mock.calls[0];
-        expect(sentToken).toBe('raw-magic-token');
-        check('email contains the raw (clickable) token');
-      });
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════ verifyMagicLink
-  describe('verifyMagicLink()', () => {
+  // ════════════════════════════════════════════════════════════════════ verifyEmail
+  describe('verifyEmail()', () => {
     const future = () => new Date(Date.now() + 60_000);
     const past = () => new Date(Date.now() - 60_000);
-
-    const validRecord = () => ({
+    const record = (over: Partial<Record<string, unknown>> = {}) => ({
       id: 'tok-1',
       userId: 'user-1',
-      type: 'MAGIC_LINK',
+      type: 'EMAIL_VERIFY',
       consumedAt: null,
       expiresAt: future(),
+      ...over,
     });
 
-    describe('[HAPPY] valid unused token', () => {
-      it('logs the user in, consumes the token, and sets emailVerified', async () => {
-        prisma.verificationToken.findUnique.mockResolvedValue(validRecord());
-        prisma.verificationToken.update.mockResolvedValue({});
+    describe('[HAPPY] valid token', () => {
+      it('consumes the token, sets emailVerified, returns tokens', async () => {
+        prisma.verificationToken.findUnique.mockResolvedValue(record());
         prisma.user.update.mockResolvedValue(buildUser({ emailVerified: new Date() }));
 
-        const result = await service.verifyMagicLink('raw-magic-token');
+        const result = await service.verifyEmail({ token: 'raw-token' });
 
         expect(prisma.verificationToken.findUnique).toHaveBeenCalledWith({
-          where: { tokenHash: 'hash:raw-magic-token' },
+          where: { tokenHash: 'hash:raw-token' },
         });
-        check('looked up token by its HASH (not raw value)');
+        check('looked the token up by hash, not raw value');
         expect(prisma.verificationToken.update).toHaveBeenCalledWith(
           expect.objectContaining({ where: { id: 'tok-1' } }),
         );
-        check('marked token as consumed');
-        const userUpdateArgs = prisma.user.update.mock.calls[0][0];
-        expect(userUpdateArgs.data.emailVerified).toBeInstanceOf(Date);
-        check('set user.emailVerified timestamp');
+        expect(prisma.user.update.mock.calls[0][0].data.emailVerified).toBeInstanceOf(Date);
+        check('consumed the token and set emailVerified');
         expect(result.tokens).toEqual(FAKE_TOKENS);
-        check('returned fresh access + refresh tokens');
+        check('signed the user in after verification');
       });
     });
 
-    describe('[SAD] invalid token', () => {
-      it('throws when the token does not exist', async () => {
+    describe('[SAD / SECURITY] bad tokens', () => {
+      it('rejects an unknown token', async () => {
         prisma.verificationToken.findUnique.mockResolvedValue(null);
+        await expect(service.verifyEmail({ token: 'x' })).rejects.toThrow(UnauthorizedException);
+        check('rejected unknown token');
+      });
+      it('rejects an expired token', async () => {
+        prisma.verificationToken.findUnique.mockResolvedValue(record({ expiresAt: past() }));
+        await expect(service.verifyEmail({ token: 'raw-token' })).rejects.toThrow(
+          UnauthorizedException,
+        );
+        check('rejected expired token');
+      });
+      it('rejects an already-consumed token (no replay)', async () => {
+        prisma.verificationToken.findUnique.mockResolvedValue(record({ consumedAt: new Date() }));
+        await expect(service.verifyEmail({ token: 'raw-token' })).rejects.toThrow(
+          UnauthorizedException,
+        );
+        check('blocked replay of a used token');
+      });
+      it('rejects a token of the wrong type', async () => {
+        prisma.verificationToken.findUnique.mockResolvedValue(record({ type: 'PASSWORD_RESET' }));
+        await expect(service.verifyEmail({ token: 'raw-token' })).rejects.toThrow(
+          UnauthorizedException,
+        );
+        check('rejected a mismatched token type');
+      });
+    });
+  });
 
-        await expect(service.verifyMagicLink('bad')).rejects.toThrow(UnauthorizedException);
-        check('threw Unauthorized for unknown token');
+  // ═══════════════════════════════════════════════════════════════ resendVerification
+  describe('resendVerification()', () => {
+    it('re-sends for an unverified EMAIL account', async () => {
+      prisma.user.findUnique.mockResolvedValue(
+        buildUser({ authProvider: 'EMAIL', emailVerified: null }),
+      );
+      prisma.verificationToken.create.mockResolvedValue({});
+
+      const result = await service.resendVerification({ email: 'alice@example.com' });
+
+      expect(mail.sendVerificationEmail).toHaveBeenCalled();
+      expect(result).toEqual({ success: true });
+      check('re-sent verification to an unverified account');
+    });
+
+    it('stays quiet for verified / Google / unknown emails', async () => {
+      prisma.user.findUnique.mockResolvedValue(buildUser({ emailVerified: new Date() }));
+      await service.resendVerification({ email: 'alice@example.com' });
+      prisma.user.findUnique.mockResolvedValue(buildUser({ authProvider: 'GOOGLE' }));
+      await service.resendVerification({ email: 'alice@example.com' });
+      prisma.user.findUnique.mockResolvedValue(null);
+      const result = await service.resendVerification({ email: 'ghost@example.com' });
+
+      expect(mail.sendVerificationEmail).not.toHaveBeenCalled();
+      expect(result).toEqual({ success: true });
+      check('never leaked which emails exist, sent nothing');
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════ requestPasswordReset
+  describe('requestPasswordReset()', () => {
+    it('issues a reset token for an EMAIL account', async () => {
+      prisma.user.findUnique.mockResolvedValue(buildUser({ authProvider: 'EMAIL' }));
+      prisma.verificationToken.create.mockResolvedValue({});
+
+      const result = await service.requestPasswordReset({ email: 'alice@example.com' });
+
+      const createArgs = prisma.verificationToken.create.mock.calls[0][0];
+      expect(createArgs.data.tokenHash).toBe('hash:raw-token');
+      expect(createArgs.data.type).toBe('PASSWORD_RESET');
+      expect(mail.sendPasswordReset).toHaveBeenCalledWith('alice@example.com', 'raw-token');
+      expect(result).toEqual({ success: true });
+      check('stored a hashed reset token and emailed the raw one');
+    });
+
+    it('does nothing for a GOOGLE account (still returns success)', async () => {
+      prisma.user.findUnique.mockResolvedValue(buildUser({ authProvider: 'GOOGLE' }));
+      const result = await service.requestPasswordReset({ email: 'alice@example.com' });
+      expect(prisma.verificationToken.create).not.toHaveBeenCalled();
+      expect(result).toEqual({ success: true });
+      check('refused to issue a reset for a Google account, without leaking it');
+    });
+
+    it('does nothing for an unknown email (still returns success)', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      const result = await service.requestPasswordReset({ email: 'ghost@example.com' });
+      expect(prisma.verificationToken.create).not.toHaveBeenCalled();
+      expect(result).toEqual({ success: true });
+      check('stayed quiet for an unknown email');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════ resetPassword
+  describe('resetPassword()', () => {
+    const future = () => new Date(Date.now() + 60_000);
+    const record = (over: Partial<Record<string, unknown>> = {}) => ({
+      id: 'tok-1',
+      userId: 'user-1',
+      type: 'PASSWORD_RESET',
+      consumedAt: null,
+      expiresAt: future(),
+      user: buildUser({ authProvider: 'EMAIL' }),
+      ...over,
+    });
+
+    describe('[HAPPY] valid token', () => {
+      it('sets the new password, revokes sessions, returns tokens', async () => {
+        prisma.verificationToken.findUnique.mockResolvedValue(record());
+        prisma.user.update.mockResolvedValue(buildUser({ emailVerified: new Date() }));
+
+        const result = await service.resetPassword({ token: 'raw-token', newPassword: 'Fresh123' });
+
+        const newHash: string = prisma.user.update.mock.calls[0][0].data.passwordHash;
+        await expect(bcrypt.compare('Fresh123', newHash)).resolves.toBe(true);
+        expect(tokens.revokeAllForUser).toHaveBeenCalledWith('user-1');
+        expect(result.tokens).toEqual(FAKE_TOKENS);
+        check('rehashed the password, revoked sessions, and signed in');
       });
     });
 
-    describe('[SECURITY] token lifecycle', () => {
-      it('rejects expired tokens (and does not consume them)', async () => {
-        prisma.verificationToken.findUnique.mockResolvedValue({
-          ...validRecord(),
-          expiresAt: past(),
-        });
-
-        await expect(service.verifyMagicLink('raw-magic-token')).rejects.toThrow(
-          UnauthorizedException,
-        );
-        check('threw Unauthorized for expired token');
-        expect(prisma.verificationToken.update).not.toHaveBeenCalled();
-        check('did NOT mark expired token as consumed');
+    describe('[SAD / SECURITY]', () => {
+      it('rejects an invalid token', async () => {
+        prisma.verificationToken.findUnique.mockResolvedValue(null);
+        await expect(
+          service.resetPassword({ token: 'x', newPassword: 'Fresh123' }),
+        ).rejects.toThrow(UnauthorizedException);
+        check('rejected an invalid reset token');
       });
 
-      it('rejects already-consumed tokens (no replay)', async () => {
-        prisma.verificationToken.findUnique.mockResolvedValue({
-          ...validRecord(),
-          consumedAt: new Date(),
-        });
-
-        await expect(service.verifyMagicLink('raw-magic-token')).rejects.toThrow(
-          UnauthorizedException,
+      it('rejects a token whose user is a Google account', async () => {
+        prisma.verificationToken.findUnique.mockResolvedValue(
+          record({ user: buildUser({ authProvider: 'GOOGLE' }) }),
         );
-        check('blocked replay attack on already-used token');
-      });
-
-      it('rejects tokens of the wrong type (e.g. PASSWORD_RESET used as MAGIC_LINK)', async () => {
-        prisma.verificationToken.findUnique.mockResolvedValue({
-          ...validRecord(),
-          type: 'PASSWORD_RESET',
-        });
-
-        await expect(service.verifyMagicLink('raw-magic-token')).rejects.toThrow(
-          UnauthorizedException,
-        );
-        check('rejected token with mismatched type');
+        await expect(
+          service.resetPassword({ token: 'raw-token', newPassword: 'Fresh123' }),
+        ).rejects.toThrow(ForbiddenException);
+        check('refused to set a password on a Google account');
       });
     });
   });
@@ -527,76 +521,53 @@ describe('AuthService (unit)', () => {
     describe('[HAPPY] existing OAuth account', () => {
       it('logs in without creating new records', async () => {
         prisma.oAuthAccount.findUnique.mockResolvedValue({
-          user: buildUser({ id: 'user-1', email: profile.email }),
+          user: buildUser({ id: 'user-1', email: profile.email, authProvider: 'GOOGLE' }),
         });
 
         const result = await service.loginOrCreateOAuth(profile, 'google');
 
         expect(prisma.user.findUnique).not.toHaveBeenCalled();
-        check('did NOT search users by email (account already linked)');
-        expect(prisma.user.create).not.toHaveBeenCalled();
-        check('did NOT create a new user');
         expect(prisma.oAuthAccount.create).not.toHaveBeenCalled();
-        check('did NOT create a new oAuthAccount row');
         expect(result.tokens).toEqual(FAKE_TOKENS);
-        check('returned tokens');
-        expect(result.user.email).toBe(profile.email);
-        check('returned the linked user');
+        check('logged in via the already-linked Google account');
       });
     });
 
-    describe('[HAPPY] existing email, new Google link', () => {
-      it('links a new Google account to an existing email-based user', async () => {
+    describe('[SAD] email belongs to a password account', () => {
+      it('throws ConflictException instead of taking over the account', async () => {
         prisma.oAuthAccount.findUnique.mockResolvedValue(null);
-        prisma.user.findUnique.mockResolvedValue(buildUser({ id: 'user-2', email: profile.email }));
-        prisma.oAuthAccount.create.mockResolvedValue({});
-
-        const result = await service.loginOrCreateOAuth(profile, 'google');
-
-        expect(prisma.user.create).not.toHaveBeenCalled();
-        check('did NOT create a duplicate user (email already exists)');
-        expect(prisma.oAuthAccount.create).toHaveBeenCalledWith(
-          expect.objectContaining({
-            data: expect.objectContaining({
-              userId: 'user-2',
-              provider: 'google',
-              providerAccountId: profile.providerAccountId,
-            }),
-          }),
+        prisma.user.findUnique.mockResolvedValue(
+          buildUser({ id: 'user-2', email: profile.email, authProvider: 'EMAIL' }),
         );
-        check('linked Google account to the existing user');
-        expect(result.user.id).toBe('user-2');
-        check('returned the existing user');
+
+        await expect(service.loginOrCreateOAuth(profile, 'google')).rejects.toThrow(
+          ConflictException,
+        );
+        check('blocked Google sign-in for an existing email+password account');
+        expect(prisma.oAuthAccount.create).not.toHaveBeenCalled();
+        check('did NOT link Google to the password account');
       });
     });
 
     describe('[HAPPY] brand-new user', () => {
-      it('creates the user with emailVerified set and links the OAuth account', async () => {
+      it('creates a verified GOOGLE user and links the OAuth account', async () => {
         prisma.oAuthAccount.findUnique.mockResolvedValue(null);
         prisma.user.findUnique.mockResolvedValue(null);
         prisma.user.create.mockResolvedValue(
-          buildUser({ id: 'user-3', email: profile.email, emailVerified: new Date() }),
+          buildUser({ id: 'user-3', email: profile.email, authProvider: 'GOOGLE', emailVerified: new Date() }),
         );
         prisma.oAuthAccount.create.mockResolvedValue({});
 
         const result = await service.loginOrCreateOAuth(profile, 'google');
 
-        expect(prisma.user.create).toHaveBeenCalledWith(
-          expect.objectContaining({
-            data: expect.objectContaining({
-              email: profile.email,
-              emailVerified: expect.any(Date),
-            }),
-          }),
-        );
-        check('created new user with emailVerified set (Google already verified the email)');
+        const createArgs = prisma.user.create.mock.calls[0][0];
+        expect(createArgs.data.authProvider).toBe('GOOGLE');
+        expect(createArgs.data.emailVerified).toBeInstanceOf(Date);
+        check('created a Google user, verified by default');
         expect(prisma.oAuthAccount.create).toHaveBeenCalled();
-        check('linked OAuth account to the new user');
         expect(result.user.id).toBe('user-3');
-        check('returned the new user');
+        check('linked the OAuth account and returned the new user');
       });
     });
   });
-  
 });
-

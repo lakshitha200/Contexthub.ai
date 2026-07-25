@@ -2,36 +2,65 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import { GoogleButton } from "@/components/auth/oauth-buttons";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
+import { Spinner } from "@/components/ui/misc";
 import { useToast } from "@/components/ui/toast";
-import { ApiError } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { useAuthStore } from "@/lib/store/auth-store";
 
-export default function LoginPage() {
+function LoginInner() {
   const router = useRouter();
+  const params = useSearchParams();
   const toast = useToast();
   const login = useAuthStore((s) => s.login);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
+  const [needsVerify, setNeedsVerify] = useState(false);
+  const [resending, setResending] = useState(false);
+
+  // Google OAuth bounces back here with ?error=... when it can't sign the user in
+  // (e.g. the email already belongs to an email + password account).
+  useEffect(() => {
+    const e = params.get("error");
+    if (e) setError(e);
+  }, [params]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(undefined);
+    setNeedsVerify(false);
     setLoading(true);
     try {
       await login({ email, password });
       toast("success", "Welcome back!");
       router.replace("/workspaces");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong");
+      const message = err instanceof ApiError ? err.message : "Something went wrong";
+      setError(message);
+      // 403 with a "verify your email" message → offer to resend the link.
+      if (err instanceof ApiError && err.status === 403 && /verify/i.test(message)) {
+        setNeedsVerify(true);
+      }
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function resend() {
+    setResending(true);
+    try {
+      await api.auth.resendVerification(email);
+      toast("success", "Verification email sent", `Check ${email} for the link.`);
+      setNeedsVerify(false);
+    } finally {
+      setResending(false);
     }
   }
 
@@ -68,8 +97,7 @@ export default function LoginPage() {
           />
         </Field>
         <Field label="Password" error={error}>
-          <Input
-            type="password"
+          <PasswordInput
             autoComplete="current-password"
             placeholder="••••••••"
             value={password}
@@ -77,12 +105,17 @@ export default function LoginPage() {
             required
           />
         </Field>
+        {needsVerify && (
+          <Button type="button" variant="ghost" className="w-full" onClick={resend} loading={resending}>
+            Resend verification email
+          </Button>
+        )}
         <div className="flex justify-end">
           <Link
-            href="/auth/magic-link"
-            className="text-xs font-medium text-primary hover:underline"
+            href="/auth/forgot-password"
+            className="text-xs font-medium text-muted-foreground hover:text-foreground hover:underline"
           >
-            Use a magic link instead
+            Forgot password?
           </Link>
         </div>
         <Button type="submit" size="lg" className="w-full" loading={loading}>
@@ -97,5 +130,13 @@ export default function LoginPage() {
         </Link>
       </p>
     </motion.div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<Spinner className="h-6 w-6" />}>
+      <LoginInner />
+    </Suspense>
   );
 }

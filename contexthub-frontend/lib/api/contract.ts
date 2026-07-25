@@ -14,6 +14,7 @@ import type {
   LoginPayload,
   Message,
   RegisterPayload,
+  RegisterResult,
   User,
   Workspace,
   WorkspaceMember,
@@ -22,12 +23,14 @@ import type {
 export interface Api {
   auth: {
     login(p: LoginPayload): Promise<AuthResponse>;
-    register(p: RegisterPayload): Promise<AuthResponse>;
+    register(p: RegisterPayload): Promise<RegisterResult>;
     me(): Promise<User>;
     updateProfile(p: { name?: string; avatarUrl?: string }): Promise<User>;
     logout(): Promise<void>;
-    requestMagicLink(email: string, name?: string): Promise<void>;
-    verifyMagicLink(token: string): Promise<AuthResponse>;
+    verifyEmail(token: string): Promise<AuthResponse>;
+    resendVerification(email: string): Promise<void>;
+    forgotPassword(email: string): Promise<void>;
+    resetPassword(token: string, newPassword: string): Promise<AuthResponse>;
   };
   workspaces: {
     list(): Promise<Workspace[]>;

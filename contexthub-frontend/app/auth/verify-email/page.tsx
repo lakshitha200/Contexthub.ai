@@ -21,16 +21,16 @@ function VerifyInner() {
     ran.current = true;
     const token = params.get("token");
     if (!token) {
-      setError("This magic link is missing its token.");
+      setError("This verification link is missing its token.");
       return;
     }
     api.auth
-      .verifyMagicLink(token)
+      .verifyEmail(token)
       .then(({ user }) => {
         setUser(user);
         router.replace("/workspaces");
       })
-      .catch(() => setError("This magic link is invalid or has expired."));
+      .catch(() => setError("This verification link is invalid or has expired."));
   }, [params, router, setUser]);
 
   if (error) {
@@ -41,10 +41,7 @@ function VerifyInner() {
         </div>
         <h2 className="text-2xl font-semibold tracking-tight">Link expired</h2>
         <p className="mt-2 text-sm text-muted-foreground">{error}</p>
-        <Button className="mt-6" onClick={() => router.replace("/auth/magic-link")}>
-          Request a new link
-        </Button>
-        <p className="mt-4 text-sm text-muted-foreground">
+        <p className="mt-6 text-sm text-muted-foreground">
           <Link href="/auth/login" className="font-medium text-primary hover:underline">
             Back to sign in
           </Link>
@@ -56,12 +53,12 @@ function VerifyInner() {
   return (
     <div className="flex flex-col items-center gap-3 text-center">
       <Spinner className="h-6 w-6 text-primary" />
-      <p className="text-sm text-muted-foreground">Signing you in…</p>
+      <p className="text-sm text-muted-foreground">Verifying your email…</p>
     </div>
   );
 }
 
-export default function MagicLinkVerifyPage() {
+export default function VerifyEmailPage() {
   return (
     <Suspense fallback={<Spinner className="h-6 w-6" />}>
       <VerifyInner />

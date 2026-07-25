@@ -6,7 +6,6 @@ import {
   HttpStatus,
   Patch,
   Post,
-  Query,
   Req,
   Res,
   UseGuards,
@@ -16,10 +15,13 @@ import type { Request, Response } from 'express';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
-import { MagicLinkRequestDto } from './dto/magic-link.dto';
 import { RegisterDto } from './dto/register.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 import { AuthService } from './services/auth.service';
@@ -37,8 +39,8 @@ export class AuthController {
 
   @Public()
   @Post('register')
-  register(@Body() dto: RegisterDto, @Req() req: Request) {
-    return this.auth.register(dto, this.meta(req));
+  register(@Body() dto: RegisterDto) {
+    return this.auth.register(dto);
   }
 
   @Public()
@@ -46,6 +48,20 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto, @Req() req: Request) {
     return this.auth.login(dto, this.meta(req));
+  }
+
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Post('verify-email')
+  verifyEmail(@Body() dto: VerifyEmailDto, @Req() req: Request) {
+    return this.auth.verifyEmail(dto, this.meta(req));
+  }
+
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Post('verify-email/resend')
+  resendVerification(@Body() dto: ResendVerificationDto) {
+    return this.auth.resendVerification(dto);
   }
 
   @Public()
@@ -80,15 +96,16 @@ export class AuthController {
 
   @Public()
   @HttpCode(HttpStatus.OK)
-  @Post('magic-link/request')
-  requestMagicLink(@Body() dto: MagicLinkRequestDto) {
-    return this.auth.requestMagicLink(dto);
+  @Post('forgot-password')
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.auth.requestPasswordReset(dto);
   }
 
   @Public()
-  @Get('magic-link/verify')
-  verifyMagicLink(@Query('token') token: string, @Req() req: Request) {
-    return this.auth.verifyMagicLink(token, this.meta(req));
+  @HttpCode(HttpStatus.OK)
+  @Post('reset-password')
+  resetPassword(@Body() dto: ResetPasswordDto, @Req() req: Request) {
+    return this.auth.resetPassword(dto, this.meta(req));
   }
 
   @Public()
@@ -101,14 +118,22 @@ export class AuthController {
   @UseGuards(GoogleAuthGuard)
   @Get('google/callback')
   async googleCallback(@Req() req: Request, @Res() res: Response) {
-    const profile = req.user as GoogleProfile;
-    const result = await this.auth.loginOrCreateOAuth(profile, 'google', this.meta(req));
     const webUrl = this.config.get<string>('WEB_URL', 'http://localhost:3001');
-    const params = new URLSearchParams({
-      accessToken: result.tokens.accessToken,
-      refreshToken: result.tokens.refreshToken,
-    });
-    res.redirect(`${webUrl}/auth/callback?${params.toString()}`);
+    try {
+      const profile = req.user as GoogleProfile;
+      const result = await this.auth.loginOrCreateOAuth(profile, 'google', this.meta(req));
+      const params = new URLSearchParams({
+        accessToken: result.tokens.accessToken,
+        refreshToken: result.tokens.refreshToken,
+      });
+      res.redirect(`${webUrl}/auth/callback?${params.toString()}`);
+    } catch (err) {
+      // e.g. the email already belongs to an email+password account. Bounce back
+      // to the login page with a readable message instead of a raw JSON error.
+      const message =
+        err instanceof Error ? err.message : 'Could not sign in with Google.';
+      res.redirect(`${webUrl}/auth/login?error=${encodeURIComponent(message)}`);
+    }
   }
 
   private meta(req: Request) {

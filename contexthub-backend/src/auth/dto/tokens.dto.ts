@@ -16,3 +16,8 @@ export class AuthResponseDto {
   user!: UserResponseDto;
   tokens!: TokensResponseDto;
 }
+
+export class RegisterResponseDto {
+  verificationRequired!: boolean;
+  email!: string;
+}

@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { api } from "../api";
 import { tokenStore } from "../token-store";
-import type { LoginPayload, RegisterPayload, User } from "../types";
+import type { LoginPayload, RegisterPayload, RegisterResult, User } from "../types";
 
 type Status = "idle" | "loading" | "authed" | "guest";
 
@@ -13,7 +13,7 @@ interface AuthState {
   /** Load the session from stored tokens (called once on app mount). */
   bootstrap: () => Promise<void>;
   login: (p: LoginPayload) => Promise<void>;
-  register: (p: RegisterPayload) => Promise<void>;
+  register: (p: RegisterPayload) => Promise<RegisterResult>;
   logout: () => Promise<void>;
   setUser: (u: User) => void;
 }
@@ -42,9 +42,9 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ user, status: "authed" });
   },
 
+  // Registration doesn't sign the user in — they must verify their email first.
   async register(p) {
-    const { user } = await api.auth.register(p);
-    set({ user, status: "authed" });
+    return api.auth.register(p);
   },
 
   async logout() {

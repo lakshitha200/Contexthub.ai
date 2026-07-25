@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 
-export default function MagicLinkPage() {
+export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
@@ -17,9 +17,9 @@ export default function MagicLinkPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      // Always resolves (backend returns success even for unknown emails to
-      // avoid leaking which addresses are registered).
-      await api.auth.requestMagicLink(email);
+      // Always resolves — the backend returns success even for unknown emails
+      // so we don't reveal which addresses are registered.
+      await api.auth.forgotPassword(email);
       setSent(true);
     } finally {
       setLoading(false);
@@ -40,22 +40,23 @@ export default function MagicLinkPage() {
             </div>
             <h2 className="text-2xl font-semibold tracking-tight">Check your inbox</h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              We sent a magic sign-in link to <span className="font-medium text-foreground">{email}</span>.
-              It expires in 15 minutes.
+              If an account exists for <span className="font-medium text-foreground">{email}</span>, we sent a
+              link to reset your password. It expires in 30 minutes.
             </p>
           </motion.div>
         ) : (
           <motion.div key="form" exit={{ opacity: 0 }}>
-            <h2 className="text-2xl font-semibold tracking-tight">Magic link sign-in</h2>
+            <h2 className="text-2xl font-semibold tracking-tight">Forgot your password?</h2>
             <p className="mt-1.5 text-sm text-muted-foreground">
-              We&apos;ll email you a one-tap link — no password needed.
+              Enter your email and we&apos;ll send you a link to reset it. You can also use this to set a
+              password if you signed up with Google.
             </p>
             <form onSubmit={onSubmit} className="mt-7 space-y-4">
               <Field label="Email">
-                <Input type="email" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                <Input type="email" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
               </Field>
               <Button type="submit" size="lg" className="w-full" loading={loading}>
-                Send magic link
+                Send reset link
               </Button>
             </form>
           </motion.div>

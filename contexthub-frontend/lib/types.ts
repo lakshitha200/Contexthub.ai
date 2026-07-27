@@ -89,7 +89,7 @@ export interface Document {
   id: string;
   workspaceId: string;
   collectionId: string;
-  uploaderId: string;
+  uploaderId: string | null;
   filename: string;
   mimeType: string;
   sizeBytes: number;

@@ -11,7 +11,7 @@ model Document {
   id           String    @id @default(cuid())
   workspaceId  String
   collectionId String
-  uploaderId   String
+  uploaderId   String?
   filename     String
   mimeType     String
   sizeBytes    Int
@@ -23,7 +23,7 @@ model Document {
 
   workspace  Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
-  uploader   User       @relation("UploadedDocuments", fields: [uploaderId], references: [id])
+  uploader   User?      @relation("UploadedDocuments", fields: [uploaderId], references: [id], onDelete: SetNull)
   chunks     Chunk[]
 
   @@index([workspaceId])

@@ -1,16 +1,47 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as nodemailer from 'nodemailer';
 import { Resend } from 'resend';
+
+type MailDriver = 'smtp' | 'resend' | 'none';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
-  private readonly resend: Resend | null;
+  private readonly driver: MailDriver;
+  private readonly smtp: nodemailer.Transporter | null = null;
+  private readonly resend: Resend | null = null;
 
   constructor(private readonly config: ConfigService) {
-    const apiKey = this.config.get<string>('RESEND_API_KEY');
-    // No key (e.g. local dev) → we just log the links instead of sending.
-    this.resend = apiKey ? new Resend(apiKey) : null;
+    // Priority: SMTP (if configured) → Resend (if configured) → log-only.
+    const smtpHost = this.config.get<string>('SMTP_HOST');
+    const resendKey = this.config.get<string>('RESEND_API_KEY');
+
+    if (smtpHost) {
+      const port = Number(this.config.get<string>('SMTP_PORT', '587'));
+      this.smtp = nodemailer.createTransport({
+        host: smtpHost,
+        port,
+        secure: port === 465, // 465 = implicit TLS; 587 = STARTTLS
+        auth: {
+          user: this.config.get<string>('SMTP_USER'),
+          pass: this.config.get<string>('SMTP_PASS'),
+        },
+        // Dev only: skip cert verification when a local proxy/AV/firewall
+        // presents a self-signed cert. NEVER enable this in production.
+        ...(process.env.NODE_ENV !== 'production'
+          ? { tls: { rejectUnauthorized: false } }
+          : {}),
+      });
+      this.driver = 'smtp';
+    } else if (resendKey) {
+      this.resend = new Resend(resendKey);
+      this.driver = 'resend';
+    } else {
+      // No provider (e.g. local dev) → we just log the links instead of sending.
+      this.driver = 'none';
+    }
+    this.logger.log(`Mail driver: ${this.driver}`);
   }
 
   async sendVerificationEmail(email: string, token: string) {
@@ -49,20 +80,24 @@ export class MailService {
   }
 
   private async send(to: string, subject: string, html: string, logLine: string) {
-    if (!this.resend) {
-      this.logger.log(`[mail disabled] ${to} — ${logLine}`);
-      return;
-    }
     try {
-      const { error } = await this.resend.emails.send({
-        from: this.from(),
-        to,
-        subject,
-        html,
-      });
-      if (error) {
-        this.logger.error(`Failed to send "${subject}" to ${to}: ${error.message}`);
+      if (this.driver === 'smtp' && this.smtp) {
+        await this.smtp.sendMail({ from: this.from(), to, subject, html });
+        return;
       }
+      if (this.driver === 'resend' && this.resend) {
+        const { error } = await this.resend.emails.send({
+          from: this.from(),
+          to,
+          subject,
+          html,
+        });
+        if (error) {
+          this.logger.error(`Failed to send "${subject}" to ${to}: ${error.message}`);
+        }
+        return;
+      }
+      this.logger.log(`[mail disabled] ${to} — ${logLine}`);
     } catch (err) {
       this.logger.error(
         `Failed to send "${subject}" to ${to}: ${err instanceof Error ? err.message : err}`,
@@ -71,6 +106,13 @@ export class MailService {
   }
 
   private from(): string {
+    // SMTP uses SMTP_FROM; Resend uses RESEND_FROM. Fall back sensibly.
+    if (this.driver === 'smtp') {
+      return this.config.get<string>(
+        'SMTP_FROM',
+        this.config.get<string>('SMTP_USER', 'no-reply@localhost'),
+      );
+    }
     return this.config.get<string>('RESEND_FROM', 'onboarding@resend.dev');
   }
 

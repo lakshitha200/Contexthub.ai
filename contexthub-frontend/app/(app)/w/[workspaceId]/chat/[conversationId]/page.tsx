@@ -10,6 +10,7 @@ import { MessageBubble } from "@/components/chat/message-bubble";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
+import { useVoiceStore } from "@/lib/store/voice-store";
 import { useWorkspace } from "@/lib/store/workspace-context";
 import type { Citation, Conversation, Message } from "@/lib/types";
 
@@ -76,6 +77,10 @@ function ConversationView({
         const { message } = await api.chat.ask(workspaceId, conversationId, { content: text });
         setMessages((m) => m.filter((x) => x.id !== pendingId).concat(message));
         setAnimateId(message.id);
+        // Read the answer aloud when the user has voice read-aloud enabled.
+        if (useVoiceStore.getState().readAloud) {
+          useVoiceStore.getState().speak(message.content);
+        }
         // Refresh conversation meta (title may have been set on first turn).
         const conv = await api.chat.getConversation(workspaceId, conversationId);
         setConversation(conv);
@@ -95,6 +100,7 @@ function ConversationView({
 
   const send = useCallback(
     (text: string) => {
+      useVoiceStore.getState().stopSpeaking(); // interrupt any answer being read
       const tempUser: Message = {
         id: `tmp_${Date.now()}`,
         conversationId,
@@ -132,6 +138,11 @@ function ConversationView({
       active = false;
     };
   }, [workspaceId, conversationId, toast]);
+
+  // Stop any read-aloud when leaving the conversation or switching chats.
+  useEffect(() => {
+    return () => useVoiceStore.getState().stopSpeaking();
+  }, [conversationId]);
 
   // Auto-send the handoff question from the "new chat" screen (once).
   useEffect(() => {

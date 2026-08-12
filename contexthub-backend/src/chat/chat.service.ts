@@ -19,13 +19,15 @@ export interface Citation {
   snippet: string;
 }
 
-const SYSTEM_INSTRUCTION = `You are ContextHub, a helpful assistant that answers questions strictly from the provided context.
+const SYSTEM_INSTRUCTION = `You are ContextHub, a helpful AI assistant for a team's knowledge workspace.
 
-Rules:
-- Answer ONLY using the numbered context passages given in the user's message.
-- When you use a passage, cite it inline with its number in square brackets, e.g. [1] or [2][3].
-- If the context does not contain the answer, say you don't have enough information in the provided documents. Do not invent facts.
-- Be concise and direct.`;
+You are given numbered context passages retrieved from the user's documents (there may be none, or they may be irrelevant to the question).
+
+How to answer:
+- If the passages are relevant, answer using ONLY them and cite each fact inline with its number in square brackets, e.g. [1] or [2][3].
+- If the question is a greeting, small talk, or a general-knowledge / how-to-use-this-assistant question that the passages don't cover, just answer briefly and helpfully from your own knowledge. In that case do NOT add any [n] citation markers, and don't claim the answer came from the user's documents.
+- If the question clearly asks about the user's documents but the passages don't contain the answer, say you couldn't find it in the documents and suggest uploading or rephrasing. Never invent facts about the user's documents.
+- Be concise, direct, and friendly.`;
 
 // How many past turns of the conversation to send back to the model.
 const MAX_HISTORY_MESSAGES = 10;
@@ -95,18 +97,17 @@ export class ChatService {
       this.topKValue(),
     );
 
-    let answer: string;
-    let citations: Citation[] = [];
+    // Hybrid: always let the LLM answer. It grounds + cites when the passages
+    // are relevant, and answers greetings / general questions conversationally
+    // otherwise. We then attach ONLY the sources the answer actually cited, so
+    // small talk shows no citations and document answers stay grounded.
+    const turns = this.buildTurns(priorMessages, question, chunks);
+    const answer = await this.llm.generate(turns, SYSTEM_INSTRUCTION);
 
-    if (chunks.length === 0) {
-      // Nothing to ground on — answer honestly without calling the LLM.
-      answer =
-        "I don't have any indexed documents to answer that from yet. Upload and process documents, then ask again.";
-    } else {
-      citations = this.toCitations(chunks);
-      const turns = this.buildTurns(priorMessages, question, chunks);
-      answer = await this.llm.generate(turns, SYSTEM_INSTRUCTION);
-    }
+    const cited = extractCitedIndices(answer);
+    const citations: Citation[] = chunks.length
+      ? this.toCitations(chunks).filter((c) => cited.has(c.index))
+      : [];
 
     const assistant = await this.conversations.addMessage(
       conversationId,
@@ -143,14 +144,16 @@ export class ChatService {
         text: m.content,
       }));
 
-    const context = chunks
-      .map(
-        (c, i) =>
-          `[${i + 1}] (source: ${c.filename}${
-            c.pageNumber ? `, p.${c.pageNumber}` : ''
-          })\n${c.content}`,
-      )
-      .join('\n\n');
+    const context = chunks.length
+      ? chunks
+          .map(
+            (c, i) =>
+              `[${i + 1}] (source: ${c.filename}${
+                c.pageNumber ? `, p.${c.pageNumber}` : ''
+              })\n${c.content}`,
+          )
+          .join('\n\n')
+      : '(No relevant document passages were found for this question.)';
 
     const finalTurn: LlmTurn = {
       role: 'user',
@@ -207,4 +210,15 @@ export class ChatService {
   private topKValue(): number {
     return Number(this.config.get<string>('RAG_TOP_K', '5'));
   }
+}
+
+/** Which [n] citation markers the model actually used in its answer. */
+function extractCitedIndices(answer: string): Set<number> {
+  const cited = new Set<number>();
+  const re = /\[(\d+)\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(answer)) !== null) {
+    cited.add(Number(match[1]));
+  }
+  return cited;
 }

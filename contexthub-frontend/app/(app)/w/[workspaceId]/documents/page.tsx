@@ -39,7 +39,7 @@ export default function DocumentsPage() {
 }
 
 function DocumentsView() {
-  const { workspaceId, collections, canManage, reloadCollections } = useWorkspace();
+  const { workspaceId, collections, canManage, reloadCollections, upsertCollection } = useWorkspace();
   const search = useSearchParams();
   const toast = useToast();
   const collectionParam = search.get("collection");
@@ -319,7 +319,11 @@ function DocumentsView() {
         onClose={() => setColModalOpen(false)}
         workspaceId={workspaceId}
         editing={editingCol}
-        onSaved={() => void reloadCollections()}
+        onSaved={(col) => {
+          upsertCollection(col); // instant — Upload enables right away
+          if (!editingCol) setSelected(col.id); // auto-select a newly created one
+          void reloadCollections(); // reconcile counts in the background
+        }}
       />
       <ConfirmDialog
         open={!!toDelete}

@@ -13,7 +13,7 @@ import type {
   Workspace,
   WorkspaceMember,
 } from "../types";
-import type { Role } from "../types";
+import type { Invite, Role } from "../types";
 import type { Api } from "./contract";
 import { http } from "./http";
 
@@ -148,6 +148,16 @@ export const realApi: Api = {
       return raw.map((m) => mapMember(m, id));
     },
     invite: (id, p) => http.post<{ ok: true }>(`/workspaces/${enc(id)}/invite`, p),
+    async acceptInvite(token) {
+      // Backend returns the created membership; surface its workspaceId.
+      const member = await http.post<{ workspaceId: string }>("/workspaces/invites/accept", {
+        token,
+      });
+      return { workspaceId: member.workspaceId };
+    },
+    listInvites: (id) => http.get<Invite[]>(`/workspaces/${enc(id)}/invites`),
+    revokeInvite: (id, inviteId) =>
+      http.del<void>(`/workspaces/${enc(id)}/invites/${enc(inviteId)}`),
     removeMember: (id, userId) =>
       http.del<void>(`/workspaces/${enc(id)}/members/${enc(userId)}`),
     leave: (id) => http.post<void>(`/workspaces/${enc(id)}/leave`),

@@ -10,6 +10,7 @@ import type {
   CreateWorkspacePayload,
   Document,
   DocStatus,
+  Invite,
   InviteMemberPayload,
   LoginPayload,
   Message,
@@ -40,6 +41,9 @@ export interface Api {
     remove(id: string): Promise<void>;
     members(id: string): Promise<WorkspaceMember[]>;
     invite(id: string, p: InviteMemberPayload): Promise<{ ok: true }>;
+    acceptInvite(token: string): Promise<{ workspaceId: string }>;
+    listInvites(id: string): Promise<Invite[]>;
+    revokeInvite(id: string, inviteId: string): Promise<void>;
     removeMember(id: string, userId: string): Promise<void>;
     leave(id: string): Promise<void>;
   };

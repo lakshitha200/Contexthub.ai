@@ -168,6 +168,39 @@ export class WorkspaceService {
     return { success: true };
   }
 
+  /** Pending invites for a workspace (not yet accepted, revoked, or expired). */
+  async listInvites(workspaceId: string) {
+    return this.prisma.invite.findMany({
+      where: {
+        workspaceId,
+        acceptedAt: null,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        createdAt: true,
+        expiresAt: true,
+      },
+    });
+  }
+
+  /** Cancel a pending invite. */
+  async revokeInvite(workspaceId: string, inviteId: string) {
+    const invite = await this.prisma.invite.findUnique({ where: { id: inviteId } });
+    if (!invite || invite.workspaceId !== workspaceId) {
+      throw new NotFoundException('Invite not found in this workspace');
+    }
+    await this.prisma.invite.update({
+      where: { id: inviteId },
+      data: { revokedAt: new Date() },
+    });
+    return { success: true };
+  }
+
   async acceptInvite(userId: string, userEmail: string, rawToken: string) {
     const tokenHash = this.tokens.hash(rawToken);
 

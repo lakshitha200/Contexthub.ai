@@ -71,6 +71,15 @@ export interface WorkspaceMember {
   user: Pick<User, "id" | "email" | "name" | "avatarUrl">;
 }
 
+/** A pending workspace invitation (sent, not yet accepted). */
+export interface Invite {
+  id: string;
+  email: string;
+  role: Role;
+  createdAt: string;
+  expiresAt: string;
+}
+
 // ------------------------------------------------------------------
 // Collection
 // ------------------------------------------------------------------

@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, use, useCallback, useEffect, useRef, useState } from "react";
 import { useChat } from "@/components/chat/chat-context";
 import { ChatComposer } from "@/components/chat/chat-composer";
-import { CitationModal } from "@/components/chat/citations";
+import { SourcesPanel } from "@/components/chat/citations";
 import { MessageBubble } from "@/components/chat/message-bubble";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
@@ -45,7 +45,7 @@ function ConversationView({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [animateId, setAnimateId] = useState<string | null>(null);
-  const [activeCitation, setActiveCitation] = useState<Citation | null>(null);
+  const [sources, setSources] = useState<{ list: Citation[]; focusDocId?: string } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentQ = useRef(false);
@@ -196,7 +196,9 @@ function ConversationView({
                 key={m.id}
                 message={m}
                 animate={m.id === animateId}
-                onCite={setActiveCitation}
+                onOpenSources={(list, focus) =>
+                  setSources({ list, focusDocId: focus?.documentId })
+                }
                 onScroll={() => scrollToBottom(false)}
                 onRetry={m.error ? retry : undefined}
               />
@@ -210,7 +212,11 @@ function ConversationView({
         <ChatComposer autoFocus busy={busy} onSend={send} />
       </div>
 
-      <CitationModal citation={activeCitation} onClose={() => setActiveCitation(null)} />
+      <SourcesPanel
+        citations={sources?.list ?? null}
+        focusDocId={sources?.focusDocId}
+        onClose={() => setSources(null)}
+      />
     </div>
   );
 }

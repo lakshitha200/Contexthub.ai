@@ -106,6 +106,8 @@ export interface Document {
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Who uploaded it — included by the list endpoint. */
+  uploader?: { id: string; name: string | null; email: string };
 }
 
 // ------------------------------------------------------------------

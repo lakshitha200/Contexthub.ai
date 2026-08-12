@@ -24,9 +24,10 @@ export function ChatComposer({
   const ref = useRef<HTMLTextAreaElement>(null);
 
   const { readAloud, ttsSupported, toggleReadAloud } = useVoiceStore();
-  // Speech-to-text: on a final transcript, send it hands-free.
+  // Speech-to-text: drop the transcript into the box; the user presses Send.
   const { supported: micSupported, listening, interim, start, stop } = useVoiceInput((text) => {
-    if (!busy) onSend(text);
+    setValue((v) => (v.trim() ? `${v.trim()} ${text}` : text));
+    requestAnimationFrame(() => ref.current?.focus());
   });
 
   useLayoutEffect(() => {

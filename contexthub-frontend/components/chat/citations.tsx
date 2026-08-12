@@ -1,89 +1,146 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { FileText, Quote } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { ChevronRight, FileText, Quote, X } from "lucide-react";
+import { useEffect, useRef } from "react";
 import type { Citation } from "@/lib/types";
-import { Modal } from "@/components/ui/modal";
 
-/**
- * The "Sources" strip shown under an assistant answer. De-duplicated by
- * document (the same file can back several passages) and kept compact, so it
- * reads like a source list rather than a wall of cards.
- */
-export function CitationsList({
-  citations,
-  onOpen,
-}: {
-  citations: Citation[];
-  onOpen: (c: Citation) => void;
-}) {
-  if (!citations.length) return null;
-
-  // One chip per source document — keep the highest-scoring passage as its rep.
+/** Collapse passages from the same document into one source entry. */
+export function dedupeCitations(citations: Citation[]): Citation[] {
   const byDoc = new Map<string, Citation>();
   for (const c of citations) {
     const existing = byDoc.get(c.documentId);
     if (!existing || c.score > existing.score) byDoc.set(c.documentId, c);
   }
-  const unique = [...byDoc.values()];
+  return [...byDoc.values()];
+}
 
+/** Compact "N sources" affordance under an answer (opens the panel). */
+export function SourcesButton({
+  citations,
+  onOpen,
+}: {
+  citations: Citation[];
+  onOpen: () => void;
+}) {
+  const n = dedupeCitations(citations).length;
+  if (!n) return null;
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-border/60 pt-2.5">
-      <span className="mr-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Sources
-      </span>
-      {unique.map((c, i) => (
-        <motion.button
-          key={c.documentId}
-          initial={{ opacity: 0, y: 4 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 + i * 0.05, duration: 0.2 }}
-          onClick={() => onOpen(c)}
-          title={`${c.filename} · ${Math.round(c.score * 100)}% match`}
-          className="group inline-flex max-w-[200px] items-center gap-1.5 rounded-md border border-border bg-secondary/50 px-2 py-1 text-xs text-foreground/80 transition-colors hover:border-primary/40 hover:bg-secondary"
-        >
-          <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <span className="truncate font-medium">{c.filename}</span>
-        </motion.button>
-      ))}
-    </div>
+    <button
+      onClick={onOpen}
+      className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-border bg-secondary/40 px-2.5 py-1.5 text-xs font-medium text-foreground/80 transition-colors hover:border-primary/40 hover:bg-secondary"
+    >
+      <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+      {n} source{n > 1 ? "s" : ""}
+      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+    </button>
   );
 }
 
-/** Detail modal for a single citation snippet. */
-export function CitationModal({
-  citation,
+/**
+ * Right-side panel listing the sources behind an answer. Open when `citations`
+ * is non-null; `focusDocId` scrolls to and highlights a specific source
+ * (e.g. after clicking an inline [n] marker).
+ */
+export function SourcesPanel({
+  citations,
+  focusDocId,
   onClose,
 }: {
-  citation: Citation | null;
+  citations: Citation[] | null;
+  focusDocId?: string;
   onClose: () => void;
 }) {
+  const list = citations ? dedupeCitations(citations) : [];
+  const refs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  useEffect(() => {
+    if (!citations) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    // Scroll the focused source into view.
+    if (focusDocId) {
+      requestAnimationFrame(() =>
+        refs.current[focusDocId]?.scrollIntoView({ block: "center", behavior: "smooth" }),
+      );
+    }
+    return () => window.removeEventListener("keydown", onKey);
+  }, [citations, focusDocId, onClose]);
+
   return (
-    <Modal open={!!citation} onClose={onClose} className="max-w-lg">
-      {citation && (
-        <div>
-          <div className="flex items-center gap-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-accent text-accent-foreground">
-              <FileText className="h-5 w-5" />
-            </span>
-            <div className="min-w-0">
-              <p className="truncate font-semibold">{citation.filename}</p>
+    <AnimatePresence>
+      {citations && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <motion.div
+            className="absolute inset-0 bg-black/30 backdrop-blur-[2px]"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            onClick={onClose}
+          />
+          <motion.aside
+            className="relative z-10 flex h-full w-full max-w-[400px] flex-col border-l border-border bg-popover shadow-pop"
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "spring", duration: 0.35, bounce: 0.12 }}
+          >
+            <div className="flex h-14 items-center justify-between border-b border-border px-5">
+              <h2 className="text-sm font-semibold">
+                Sources <span className="text-muted-foreground">({list.length})</span>
+              </h2>
+              <button
+                onClick={onClose}
+                className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 scroll-slim">
+              {list.map((c) => (
+                <div
+                  key={c.documentId}
+                  ref={(el) => {
+                    refs.current[c.documentId] = el;
+                  }}
+                  className={cnFocus(c.documentId === focusDocId)}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent text-accent-foreground">
+                      <FileText className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{c.filename}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {c.pageNumber ? `Page ${c.pageNumber} · ` : ""}
+                        {Math.round(c.score * 100)}% match
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-2.5 rounded-lg border border-border bg-secondary/40 p-3">
+                    <Quote className="mb-1.5 h-3.5 w-3.5 text-muted-foreground" />
+                    <p className="text-[13px] leading-relaxed text-foreground/90">{c.snippet}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="border-t border-border px-5 py-3">
               <p className="text-xs text-muted-foreground">
-                Source [{citation.index}]
-                {citation.pageNumber ? ` · page ${citation.pageNumber}` : ""} ·{" "}
-                {Math.round(citation.score * 100)}% relevance
+                Answers are grounded strictly in these retrieved passages.
               </p>
             </div>
-          </div>
-          <div className="mt-4 rounded-lg border border-border bg-secondary/40 p-4">
-            <Quote className="mb-2 h-4 w-4 text-muted-foreground" />
-            <p className="text-sm leading-relaxed text-foreground/90">{citation.snippet}</p>
-          </div>
-          <p className="mt-3 text-xs text-muted-foreground">
-            This passage was retrieved from your documents and used to ground the answer.
-          </p>
+          </motion.aside>
         </div>
       )}
-    </Modal>
+    </AnimatePresence>
   );
+}
+
+function cnFocus(focused: boolean): string {
+  return `rounded-xl border p-3 transition-colors ${
+    focused ? "border-primary/50 bg-accent/40" : "border-border bg-card"
+  }`;
 }

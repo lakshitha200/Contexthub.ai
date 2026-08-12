@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
 import { useDocuments } from "@/lib/hooks/use-documents";
+import { useAuthStore } from "@/lib/store/auth-store";
 import { useWorkspace } from "@/lib/store/workspace-context";
 import type { Collection, Document } from "@/lib/types";
 import { cn, colorFromString, formatBytes, timeAgo } from "@/lib/utils";
@@ -40,6 +41,7 @@ export default function DocumentsPage() {
 
 function DocumentsView() {
   const { workspaceId, collections, canManage, reloadCollections, upsertCollection } = useWorkspace();
+  const me = useAuthStore((s) => s.user);
   const search = useSearchParams();
   const toast = useToast();
   const collectionParam = search.get("collection");
@@ -270,7 +272,15 @@ function DocumentsView() {
                         {!activeCollection && collection && <span>·</span>}
                         <span>{formatBytes(doc.sizeBytes)}</span>
                         <span>·</span>
-                        <span>{timeAgo(doc.createdAt)}</span>
+                        <span>
+                          {timeAgo(doc.createdAt)}
+                          {doc.uploader &&
+                            ` by ${
+                              doc.uploader.id === me?.id
+                                ? "you"
+                                : doc.uploader.name ?? doc.uploader.email
+                            }`}
+                        </span>
                         {doc.status === "FAILED" && doc.errorMessage && (
                           <span className="text-danger">· {doc.errorMessage}</span>
                         )}

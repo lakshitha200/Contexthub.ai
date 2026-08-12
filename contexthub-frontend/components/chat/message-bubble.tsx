@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import { AlertCircle, RotateCw } from "lucide-react";
-import { CitationsList } from "@/components/chat/citations";
+import { SourcesButton } from "@/components/chat/citations";
 import { MessageContent } from "@/components/chat/message-content";
 import { TypingDots, useTypewriter } from "@/components/chat/typewriter";
 import { Logo } from "@/components/brand";
@@ -10,16 +10,19 @@ import { Avatar } from "@/components/ui/avatar";
 import { useAuthStore } from "@/lib/store/auth-store";
 import type { Citation, Message } from "@/lib/types";
 
+/** Opens the sources panel; `focus` scrolls to a specific citation. */
+type OpenSources = (citations: Citation[], focus?: Citation) => void;
+
 export function MessageBubble({
   message,
   animate,
-  onCite,
+  onOpenSources,
   onScroll,
   onRetry,
 }: {
   message: Message;
   animate?: boolean;
-  onCite: (c: Citation) => void;
+  onOpenSources: OpenSources;
   onScroll?: () => void;
   onRetry?: () => void;
 }) {
@@ -42,20 +45,20 @@ export function MessageBubble({
   }
 
   return (
-    <AssistantBubble message={message} animate={animate} onCite={onCite} onScroll={onScroll} onRetry={onRetry} />
+    <AssistantBubble message={message} animate={animate} onOpenSources={onOpenSources} onScroll={onScroll} onRetry={onRetry} />
   );
 }
 
 function AssistantBubble({
   message,
   animate,
-  onCite,
+  onOpenSources,
   onScroll,
   onRetry,
 }: {
   message: Message;
   animate?: boolean;
-  onCite: (c: Citation) => void;
+  onOpenSources: OpenSources;
   onScroll?: () => void;
   onRetry?: () => void;
 }) {
@@ -101,13 +104,12 @@ function AssistantBubble({
           </div>
         ) : (
           <div className="rounded-2xl rounded-tl-md border border-border bg-card px-4 py-3 shadow-soft">
-            <MessageContent
-              content={shown}
-              citations={message.citations}
-              onCite={onCite}
-            />
+            <MessageContent content={shown} />
             {done && message.citations && message.citations.length > 0 && (
-              <CitationsList citations={message.citations} onOpen={onCite} />
+              <SourcesButton
+                citations={message.citations}
+                onOpen={() => onOpenSources(message.citations ?? [])}
+              />
             )}
           </div>
         )}

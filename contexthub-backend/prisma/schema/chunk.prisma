@@ -1,10 +1,28 @@
+/// What kind of source material a chunk was derived from. Everything is stored
+/// as text (so one embedding model serves all of them) — this records where the
+/// text came from, which drives citation wording and lets callers filter.
+enum ChunkKind {
+  /// Plain text extracted from the document body.
+  TEXT
+  /// A table detected in the document, rendered as markdown.
+  TABLE
+  /// A description of an embedded image/chart, written by the vision model.
+  IMAGE
+  /// Text transcribed from a page image because the page had no text layer.
+  OCR
+}
+
 model Chunk {
   id          String                       @id @default(cuid())
   documentId  String
   ordinal     Int
   content     String
   tokenCount  Int
+  kind        ChunkKind                    @default(TEXT)
   pageNumber  Int?
+  /// Storage key of the source image, for IMAGE chunks only. Lets the UI show
+  /// the chart a description came from.
+  imageKey    String?
   startOffset Int?
   endOffset   Int?
   embedding   Unsupported("vector(1536)")?

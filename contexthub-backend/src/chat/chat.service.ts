@@ -1,11 +1,11 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { MessageRole, Prisma } from '../../generated/prisma/client';
+import { ChunkKind, MessageRole, Prisma } from '../../generated/prisma/client';
 import { CollectionService } from '../collection/collection.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConversationService } from './conversation.service';
 import { AskDto } from './dto/ask.dto';
-import { LlmService, type LlmTurn } from './llm.service';
+import { LlmService, type LlmImage, type LlmTurn } from './llm.service';
 import { RetrievalService, type RetrievedChunk } from './retrieval.service';
 
 /** A source reference attached to an assistant answer. */
@@ -15,18 +15,26 @@ export interface Citation {
   documentId: string;
   filename: string;
   pageNumber: number | null;
+  /** TEXT | TABLE | IMAGE | OCR — what the passage was extracted from. */
+  kind: ChunkKind;
+  /** Storage key of the source chart/image, for IMAGE citations only. */
+  imageKey: string | null;
   score: number;
   snippet: string;
 }
 
 const SYSTEM_INSTRUCTION = `You are ContextHub, a helpful AI assistant for a team's knowledge workspace.
 
-You are given numbered context passages retrieved from the user's documents (there may be none, or they may be irrelevant to the question).
+You are given numbered context passages retrieved from the user's documents (there may be none, or they may be irrelevant to the question). Passages are labelled with what they came from: document text, a table, a transcribed scanned page, or a description of a chart or image.
+
+The user may also attach one or more images directly to their question (for example a screenshot). Those images are NOT from the knowledge base — they are part of the question itself.
 
 How to answer:
 - If the passages are relevant, answer using ONLY them and cite each fact inline with its number in square brackets, e.g. [1] or [2][3].
+- If the user attached an image, read it carefully and use it to answer. Do not cite an attached image with [n] — citation numbers refer only to the retrieved passages. When the question asks you to compare an attached image against the documents, describe what the image shows and cite the document side with [n].
 - If the question is a greeting, small talk, or a general-knowledge / how-to-use-this-assistant question that the passages don't cover, just answer briefly and helpfully from your own knowledge. In that case do NOT add any [n] citation markers, and don't claim the answer came from the user's documents.
 - If the question clearly asks about the user's documents but the passages don't contain the answer, say you couldn't find it in the documents and suggest uploading or rephrasing. Never invent facts about the user's documents.
+- A passage describing a chart was written by reading the image, so it may describe a trend without exact figures. Report only the numbers the passage actually states — never estimate a value it does not give.
 - Be concise, direct, and friendly.`;
 
 // How many past turns of the conversation to send back to the model.
@@ -76,10 +84,15 @@ export class ChatService {
     );
 
     const question = dto.content.trim();
+    // Attached images are used for THIS turn only — they are not embedded and
+    // not persisted, so a follow-up question must re-attach them.
+    const images = dto.images ?? [];
     await this.conversations.addMessage(
       conversationId,
       MessageRole.USER,
-      question,
+      images.length
+        ? `${question}\n\n[${images.length} image(s) attached]`
+        : question,
     );
 
     // Resolve the search scope. Precedence: per-question filter (dto) overrides
@@ -101,7 +114,7 @@ export class ChatService {
     // are relevant, and answers greetings / general questions conversationally
     // otherwise. We then attach ONLY the sources the answer actually cited, so
     // small talk shows no citations and document answers stay grounded.
-    const turns = this.buildTurns(priorMessages, question, chunks);
+    const turns = this.buildTurns(priorMessages, question, chunks, images);
     const answer = await this.llm.generate(turns, SYSTEM_INSTRUCTION);
 
     const cited = extractCitedIndices(answer);
@@ -136,6 +149,7 @@ export class ChatService {
     priorMessages: Array<{ role: MessageRole; content: string }>,
     question: string,
     chunks: RetrievedChunk[],
+    images: LlmImage[],
   ): LlmTurn[] {
     const history: LlmTurn[] = priorMessages
       .slice(-MAX_HISTORY_MESSAGES)
@@ -148,16 +162,19 @@ export class ChatService {
       ? chunks
           .map(
             (c, i) =>
-              `[${i + 1}] (source: ${c.filename}${
-                c.pageNumber ? `, p.${c.pageNumber}` : ''
-              })\n${c.content}`,
+              `[${i + 1}] (${describeSource(c)})\n${c.content}`,
           )
           .join('\n\n')
       : '(No relevant document passages were found for this question.)';
 
+    const attached = images.length
+      ? `\n\nThe user attached ${images.length} image(s) to this question. They are shown above and are not part of the knowledge base.`
+      : '';
+
     const finalTurn: LlmTurn = {
       role: 'user',
-      text: `Context passages:\n\n${context}\n\n---\nQuestion: ${question}`,
+      text: `Context passages:\n\n${context}${attached}\n\n---\nQuestion: ${question}`,
+      images: images.length ? images : undefined,
     };
 
     return [...history, finalTurn];
@@ -170,6 +187,8 @@ export class ChatService {
       documentId: c.documentId,
       filename: c.filename,
       pageNumber: c.pageNumber,
+      kind: c.kind,
+      imageKey: c.imageKey,
       score: Number(c.score.toFixed(4)),
       snippet:
         c.content.length > SNIPPET_LEN
@@ -209,6 +228,28 @@ export class ChatService {
 
   private topKValue(): number {
     return Number(this.config.get<string>('RAG_TOP_K', '5'));
+  }
+}
+
+/**
+ * Label a passage so the model knows how much to trust it. A table is verbatim
+ * from the document; a chart description was written by a vision model reading
+ * an image, which is a weaker source and worth flagging as such.
+ */
+function describeSource(chunk: RetrievedChunk): string {
+  const where = `source: ${chunk.filename}${
+    chunk.pageNumber ? `, p.${chunk.pageNumber}` : ''
+  }`;
+
+  switch (chunk.kind) {
+    case ChunkKind.TABLE:
+      return `${where} — table`;
+    case ChunkKind.IMAGE:
+      return `${where} — description of a chart or image`;
+    case ChunkKind.OCR:
+      return `${where} — text read from a scanned page`;
+    default:
+      return where;
   }
 }
 

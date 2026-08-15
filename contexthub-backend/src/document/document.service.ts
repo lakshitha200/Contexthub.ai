@@ -20,6 +20,12 @@ const ALLOWED_MIME_TYPES = new Set([
   'application/json',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  // Images are ingested by describing/transcribing them with the vision model,
+  // so a screenshot or a photo of a whiteboard becomes searchable text.
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
 ]);
 
 @Injectable()
@@ -113,10 +119,32 @@ export class DocumentService {
   async remove(workspaceId: string, documentId: string) {
     const document = await this.getOwnedOrThrow(workspaceId, documentId);
 
+    // Images extracted from this document during ingestion live under their own
+    // storage keys. Collect them before the cascade deletes the chunk rows,
+    // otherwise the files are stranded on disk with nothing pointing at them.
+    const imageKeys = await this.extractedImageKeys(document.id);
+
     await this.prisma.document.delete({ where: { id: document.id } });
     await this.storage.remove(document.storageKey);
 
+    for (const key of imageKeys) {
+      if (key === document.storageKey) continue; // already removed above
+      await this.storage.remove(key);
+    }
+
     return { success: true };
+  }
+
+  /** Storage keys of the chart/page images ingestion pulled out of a document. */
+  private async extractedImageKeys(documentId: string): Promise<string[]> {
+    const rows = await this.prisma.chunk.findMany({
+      where: { documentId, imageKey: { not: null } },
+      select: { imageKey: true },
+    });
+
+    return [
+      ...new Set(rows.map((r) => r.imageKey).filter((k): k is string => !!k)),
+    ];
   }
 
   private async getOwnedOrThrow(workspaceId: string, documentId: string) {

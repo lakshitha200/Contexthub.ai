@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '../../generated/prisma/client';
+import { ChunkKind, Prisma } from '../../generated/prisma/client';
 import { EmbeddingService } from '../embedding/embedding.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -10,6 +10,10 @@ export interface RetrievedChunk {
   filename: string;
   ordinal: number;
   pageNumber: number | null;
+  /** What the passage was extracted from: body text, a table, a chart, a scan. */
+  kind: ChunkKind;
+  /** Storage key of the source chart/image, for IMAGE chunks only. */
+  imageKey: string | null;
   content: string;
   /** Cosine similarity in [0,1]; higher is more relevant. */
   score: number;
@@ -64,6 +68,8 @@ export class RetrievalService {
         filename: string;
         ordinal: number;
         pageNumber: number | null;
+        kind: ChunkKind;
+        imageKey: string | null;
         content: string;
         distance: number;
       }>
@@ -73,6 +79,8 @@ export class RetrievalService {
              d.filename                 AS "filename",
              c.ordinal                  AS "ordinal",
              c."pageNumber"             AS "pageNumber",
+             c.kind                     AS "kind",
+             c."imageKey"               AS "imageKey",
              c.content                  AS "content",
              (c.embedding <=> ${literal}::vector) AS "distance"
         FROM "Chunk" c
@@ -91,6 +99,8 @@ export class RetrievalService {
       filename: r.filename,
       ordinal: r.ordinal,
       pageNumber: r.pageNumber,
+      kind: r.kind,
+      imageKey: r.imageKey,
       content: r.content,
       // cosine distance ∈ [0,2]; similarity = 1 - distance for normalized vectors.
       score: 1 - Number(r.distance),

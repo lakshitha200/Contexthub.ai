@@ -7,10 +7,18 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { GoogleGenAI } from '@google/genai';
 
+/** An image attached to a turn, as raw base64 (no `data:` prefix). */
+export interface LlmImage {
+  mimeType: string;
+  data: string;
+}
+
 /** One turn of a chat, in provider-neutral terms. */
 export interface LlmTurn {
   role: 'user' | 'model';
   text: string;
+  /** Images the user attached to this turn. User turns only. */
+  images?: LlmImage[];
 }
 
 /**
@@ -18,6 +26,9 @@ export interface LlmTurn {
  * (`gemini-2.5-flash`) but callers only see `generate(turns, systemInstruction)`,
  * so swapping providers later means changing only this file — exactly like
  * EmbeddingService does for embeddings.
+ *
+ * Turns may carry images as well as text: `gemini-2.5-flash` is multimodal, so
+ * a pasted screenshot is just another part on the user turn.
  */
 @Injectable()
 export class LlmService implements OnModuleInit {
@@ -56,7 +67,14 @@ export class LlmService implements OnModuleInit {
         model: this.model,
         contents: turns.map((t) => ({
           role: t.role,
-          parts: [{ text: t.text }],
+          // Images first: the model reads them as context for the text that
+          // follows, which is the order Gemini's own guidance recommends.
+          parts: [
+            ...(t.images ?? []).map((img) => ({
+              inlineData: { mimeType: img.mimeType, data: img.data },
+            })),
+            { text: t.text },
+          ],
         })),
         config: {
           systemInstruction,

@@ -12,11 +12,14 @@ export function Dropdown({
   trigger,
   children,
   align = "start",
+  side = "bottom",
   className,
 }: {
   trigger: React.ReactNode;
   children: React.ReactNode;
   align?: "start" | "end";
+  /** Which way the menu opens. Use "top" for controls near the bottom edge. */
+  side?: "bottom" | "top";
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -42,13 +45,14 @@ export function Dropdown({
       <AnimatePresence>
         {open && (
           <motion.div
-            initial={{ opacity: 0, scale: 0.96, y: -4 }}
+            initial={{ opacity: 0, scale: 0.96, y: side === "top" ? 4 : -4 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.97, y: -2 }}
+            exit={{ opacity: 0, scale: 0.97, y: side === "top" ? 2 : -2 }}
             transition={{ duration: 0.14, ease: "easeOut" }}
             onClick={() => setOpen(false)}
             className={cn(
-              "absolute z-40 mt-2 min-w-[190px] overflow-hidden rounded-lg border border-border bg-popover p-1 shadow-pop",
+              "absolute z-40 min-w-[190px] overflow-hidden rounded-lg border border-border bg-popover p-1 shadow-pop",
+              side === "top" ? "bottom-full mb-2" : "top-full mt-2",
               align === "end" ? "right-0" : "left-0",
               className,
             )}

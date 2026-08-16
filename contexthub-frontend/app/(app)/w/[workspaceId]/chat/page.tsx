@@ -10,6 +10,7 @@ import { ScopeSelector } from "@/components/chat/scope-selector";
 import { Logo } from "@/components/brand";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
+import { attachmentHandoff, type PendingAttachment } from "@/lib/chat/attachments";
 import { useWorkspace } from "@/lib/store/workspace-context";
 
 const SUGGESTIONS = [
@@ -27,7 +28,7 @@ export default function NewChatPage() {
   const [scope, setScope] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function start(text: string) {
+  async function start(text: string, attachments: PendingAttachment[] = []) {
     setBusy(true);
     try {
       const conv = await api.chat.createConversation(workspaceId, {
@@ -35,8 +36,13 @@ export default function NewChatPage() {
         collectionId: scope ?? undefined,
       });
       upsert(conv);
+      // The question rides along in the URL; images are far too large for that,
+      // so they wait in the hand-off slot for the conversation page to claim.
+      attachmentHandoff.set(attachments);
       router.push(`/w/${workspaceId}/chat/${conv.id}?q=${encodeURIComponent(text)}`);
     } catch {
+      attachmentHandoff.take(); // don't leave a stale hand-off behind
+      for (const a of attachments) URL.revokeObjectURL(a.previewUrl);
       toast("error", "Couldn't start conversation");
       setBusy(false);
     }

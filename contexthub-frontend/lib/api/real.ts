@@ -238,5 +238,11 @@ export const realApi: Api = {
       http.get<Message[]>(`/workspaces/${enc(ws)}/conversations/${enc(id)}/messages`),
     ask: (ws, id, p) =>
       http.post<AskResponse>(`/workspaces/${enc(ws)}/conversations/${enc(id)}/messages`, p),
+    async chunkImageUrl(ws, chunkId) {
+      const blob = await http.getBlob(
+        `/workspaces/${enc(ws)}/chunks/${enc(chunkId)}/image`,
+      );
+      return URL.createObjectURL(blob);
+    },
   },
 };

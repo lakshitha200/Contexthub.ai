@@ -10,6 +10,7 @@ import { MessageBubble } from "@/components/chat/message-bubble";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
+import { attachmentHandoff, type PendingAttachment } from "@/lib/chat/attachments";
 import { useVoiceStore } from "@/lib/store/voice-store";
 import { useWorkspace } from "@/lib/store/workspace-context";
 import type { Citation, Conversation, Message } from "@/lib/types";
@@ -49,15 +50,18 @@ function ConversationView({
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentQ = useRef(false);
+  /** Images from the last question, so a retry can resend the same bytes. */
+  const lastAttachments = useRef<PendingAttachment[]>([]);
 
   const scrollToBottom = useCallback((smooth = true) => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: smooth ? "smooth" : "auto" });
   }, []);
 
-  // Sends `text` to the RAG endpoint. Renders an inline error bubble on failure
-  // (no user message is appended here — that's the caller's job).
+  // Sends `text` (plus any attached images) to the RAG endpoint. Renders an
+  // inline error bubble on failure (no user message is appended here — that's
+  // the caller's job).
   const runAsk = useCallback(
-    async (text: string) => {
+    async (text: string, attachments: PendingAttachment[] = []) => {
       setBusy(true);
       const pendingId = `pending_${Date.now()}`;
       const pending: Message = {
@@ -74,7 +78,10 @@ function ConversationView({
       requestAnimationFrame(() => scrollToBottom());
 
       try {
-        const { message } = await api.chat.ask(workspaceId, conversationId, { content: text });
+        const { message } = await api.chat.ask(workspaceId, conversationId, {
+          content: text,
+          images: attachments.length ? attachments.map((a) => a.image) : undefined,
+        });
         setMessages((m) => m.filter((x) => x.id !== pendingId).concat(message));
         setAnimateId(message.id);
         // Read the answer aloud when the user has voice read-aloud enabled.
@@ -99,7 +106,7 @@ function ConversationView({
   );
 
   const send = useCallback(
-    (text: string) => {
+    (text: string, attachments: PendingAttachment[] = []) => {
       useVoiceStore.getState().stopSpeaking(); // interrupt any answer being read
       const tempUser: Message = {
         id: `tmp_${Date.now()}`,
@@ -108,17 +115,26 @@ function ConversationView({
         content: text,
         citations: null,
         createdAt: new Date().toISOString(),
+        // Show what was sent. These previews belong to this page now, and are
+        // revoked on unmount (see the cleanup effect below).
+        attachments: attachments.length
+          ? attachments.map((a) => a.previewUrl)
+          : undefined,
       };
       setMessages((m) => [...m, tempUser]);
-      void runAsk(text);
+      // Keep the attachments for retry — the backend never stores them, so a
+      // retry has to resend the bytes.
+      lastAttachments.current = attachments;
+      void runAsk(text, attachments);
     },
     [conversationId, runAsk],
   );
 
-  // Retry the last question after an error (reuses the last user message).
+  // Retry the last question after an error (reuses the last user message and
+  // whatever images went with it).
   const retry = useCallback(() => {
     const lastUser = [...messages].reverse().find((m) => m.role === "USER");
-    if (lastUser) void runAsk(lastUser.content);
+    if (lastUser) void runAsk(lastUser.content, lastAttachments.current);
   }, [messages, runAsk]);
 
   // Load the conversation.
@@ -144,15 +160,26 @@ function ConversationView({
     return () => useVoiceStore.getState().stopSpeaking();
   }, [conversationId]);
 
-  // Auto-send the handoff question from the "new chat" screen (once).
+  // Auto-send the handoff question from the "new chat" screen (once), together
+  // with any images that screen left in the hand-off slot.
   useEffect(() => {
     const q = search.get("q");
     if (!loading && q && !sentQ.current) {
       sentQ.current = true;
       router.replace(`/w/${workspaceId}/chat/${conversationId}`);
-      void send(q);
+      void send(q, attachmentHandoff.take());
     }
   }, [loading, search, send, router, workspaceId, conversationId]);
+
+  // Attachment previews are object URLs owned by this page — release them when
+  // the user leaves, or they leak for the lifetime of the tab.
+  useEffect(() => {
+    const held = lastAttachments;
+    return () => {
+      for (const a of held.current) URL.revokeObjectURL(a.previewUrl);
+      held.current = [];
+    };
+  }, [conversationId]);
 
   useEffect(() => {
     scrollToBottom(false);

@@ -113,12 +113,22 @@ export interface Document {
 // ------------------------------------------------------------------
 // Chat / RAG
 // ------------------------------------------------------------------
+/**
+ * What a retrieved passage was extracted from. Everything is embedded as text;
+ * this says whether that text was body copy, a table, a vision description of
+ * a chart, or a transcription of a scanned page.
+ */
+export type ChunkKind = "TEXT" | "TABLE" | "IMAGE" | "OCR";
+
 export interface Citation {
   index: number;
   chunkId: string;
   documentId: string;
   filename: string;
   pageNumber: number | null;
+  kind: ChunkKind;
+  /** Set for IMAGE citations — fetch via api.chat.chunkImageUrl(). */
+  imageKey: string | null;
   score: number;
   snippet: string;
 }
@@ -134,6 +144,12 @@ export interface Message {
   pending?: boolean;
   /** Client-only: the answer request failed (renders an inline error bubble). */
   error?: boolean;
+  /**
+   * Client-only: object URLs for images attached to this question, so the user
+   * sees what they sent. Not persisted — they vanish on reload, which matches
+   * the backend (attached images are used for one turn and never stored).
+   */
+  attachments?: string[];
 }
 
 export interface Conversation {
@@ -181,8 +197,20 @@ export interface CreateConversationPayload {
   title?: string;
   collectionId?: string;
 }
+/** An image attached to a single question (base64, no `data:` prefix). */
+export interface AskImage {
+  mimeType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+  data: string;
+}
+
 export interface AskPayload {
   content: string;
   collectionId?: string;
   documentId?: string;
+  /**
+   * Images attached to THIS question. They are sent to the model with the
+   * question but are not embedded or added to the knowledge base — upload the
+   * file as a document if it should become searchable.
+   */
+  images?: AskImage[];
 }

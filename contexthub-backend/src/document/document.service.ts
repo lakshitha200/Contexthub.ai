@@ -135,6 +135,34 @@ export class DocumentService {
     return { success: true };
   }
 
+  /**
+   * Stream the image a chunk was derived from (a chart or diagram extracted
+   * during ingestion). Authorization goes chunk → document → workspace, so a
+   * chunk id from another tenant 404s; the storage key is never accepted from
+   * the client, which keeps it out of reach of path traversal.
+   */
+  async chunkImage(workspaceId: string, chunkId: string) {
+    const chunk = await this.prisma.chunk.findUnique({
+      where: { id: chunkId },
+      select: { imageKey: true, document: { select: { workspaceId: true } } },
+    });
+
+    if (!chunk || chunk.document.workspaceId !== workspaceId) {
+      throw new NotFoundException('Chunk not found in this workspace');
+    }
+    if (!chunk.imageKey) {
+      throw new NotFoundException('This chunk has no source image');
+    }
+    if (!(await this.storage.exists(chunk.imageKey))) {
+      throw new NotFoundException('Stored image is missing');
+    }
+
+    return {
+      mimeType: mimeTypeForKey(chunk.imageKey),
+      stream: this.storage.createReadStream(chunk.imageKey),
+    };
+  }
+
   /** Storage keys of the chart/page images ingestion pulled out of a document. */
   private async extractedImageKeys(documentId: string): Promise<string[]> {
     const rows = await this.prisma.chunk.findMany({
@@ -176,5 +204,21 @@ export class DocumentService {
 
   private maxUploadMb(): number {
     return Number(this.config.get<string>('MAX_UPLOAD_MB', '25'));
+  }
+}
+
+/** Extracted images are written with a real extension, so the name is enough. */
+function mimeTypeForKey(storageKey: string): string {
+  const ext = storageKey.slice(storageKey.lastIndexOf('.') + 1).toLowerCase();
+  switch (ext) {
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'webp':
+      return 'image/webp';
+    case 'gif':
+      return 'image/gif';
+    default:
+      return 'image/png';
   }
 }

@@ -74,5 +74,11 @@ export interface Api {
     removeConversation(workspaceId: string, id: string): Promise<void>;
     listMessages(workspaceId: string, id: string): Promise<Message[]>;
     ask(workspaceId: string, conversationId: string, p: AskPayload): Promise<AskResponse>;
+    /**
+     * Object URL for the chart/diagram behind an IMAGE citation. The endpoint
+     * needs the auth header, so the blob is fetched and wrapped rather than
+     * pointed at directly. Callers must revokeObjectURL when done.
+     */
+    chunkImageUrl(workspaceId: string, chunkId: string): Promise<string>;
   };
 }

@@ -22,6 +22,15 @@ export interface LlmTurn {
 }
 
 /**
+ * Per-call overrides of the configured defaults. Answering wants a little
+ * warmth and room; a mechanical task like rewriting a query wants neither.
+ */
+export interface LlmOptions {
+  temperature?: number;
+  maxOutputTokens?: number;
+}
+
+/**
  * Provider-agnostic chat-completion wrapper. Today it calls Google Gemini
  * (`gemini-2.5-flash`) but callers only see `generate(turns, systemInstruction)`,
  * so swapping providers later means changing only this file — exactly like
@@ -40,7 +49,9 @@ export class LlmService implements OnModuleInit {
 
   constructor(private readonly config: ConfigService) {
     this.model = this.config.get<string>('CHAT_MODEL', 'gemini-2.5-flash');
-    this.temperature = Number(this.config.get<string>('CHAT_TEMPERATURE', '0.2'));
+    this.temperature = Number(
+      this.config.get<string>('CHAT_TEMPERATURE', '0.2'),
+    );
     this.maxOutputTokens = Number(
       this.config.get<string>('CHAT_MAX_OUTPUT_TOKENS', '1024'),
     );
@@ -61,7 +72,11 @@ export class LlmService implements OnModuleInit {
    * with the current user turn; `systemInstruction` sets behaviour (grounding
    * rules, citation format). Returns the model's plain-text answer.
    */
-  async generate(turns: LlmTurn[], systemInstruction: string): Promise<string> {
+  async generate(
+    turns: LlmTurn[],
+    systemInstruction: string,
+    options: LlmOptions = {},
+  ): Promise<string> {
     try {
       const response = await this.client.models.generateContent({
         model: this.model,
@@ -78,8 +93,8 @@ export class LlmService implements OnModuleInit {
         })),
         config: {
           systemInstruction,
-          temperature: this.temperature,
-          maxOutputTokens: this.maxOutputTokens,
+          temperature: options.temperature ?? this.temperature,
+          maxOutputTokens: options.maxOutputTokens ?? this.maxOutputTokens,
         },
       });
 

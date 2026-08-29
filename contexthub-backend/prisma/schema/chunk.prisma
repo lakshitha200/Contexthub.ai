@@ -12,6 +12,12 @@ enum ChunkKind {
   OCR
 }
 
+/// NOTE: `embedding` carries a pgvector HNSW index (`Chunk_embedding_hnsw_idx`,
+/// see migration 20260829130000) that Prisma cannot represent — indexes on an
+/// `Unsupported` column are invisible to its schema diff. A generated migration
+/// has already dropped it once. Before applying any `prisma migrate dev` output,
+/// check it for `DROP INDEX "Chunk_embedding_hnsw_idx"` and remove that line;
+/// without the index every retrieval query becomes a sequential scan.
 model Chunk {
   id          String                       @id @default(cuid())
   documentId  String

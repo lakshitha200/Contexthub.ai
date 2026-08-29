@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ConversationService } from './conversation.service';
 import { AskDto } from './dto/ask.dto';
 import { LlmService, type LlmImage, type LlmTurn } from './llm.service';
+import { QueryRewriterService } from './query-rewriter.service';
 import { RetrievalService, type RetrievedChunk } from './retrieval.service';
 
 /** A source reference attached to an assistant answer. */
@@ -45,8 +46,13 @@ const SNIPPET_LEN = 300;
 /**
  * The RAG orchestration: question in → grounded, cited answer out.
  *
- *   persist USER msg → embed+retrieve chunks → build prompt → call LLM
- *   → persist ASSISTANT msg (+citations)
+ *   persist USER msg → rewrite query → embed+retrieve chunks → build prompt
+ *   → call LLM → persist ASSISTANT msg (+citations)
+ *
+ * The rewrite step exists because retrieval sees one string while the model
+ * sees the whole conversation: "what about costs?" has to become "what did the
+ * Q3 report say about costs?" before it is embedded, or the search has nothing
+ * to go on. Only the search sees it — the stored question stays as typed.
  *
  * Retrieval is scoped by the conversation's workspace and (optional) collection,
  * so an answer can only ever draw on documents the user already has access to.
@@ -57,6 +63,7 @@ export class ChatService {
 
   constructor(
     private readonly conversations: ConversationService,
+    private readonly rewriter: QueryRewriterService,
     private readonly retrieval: RetrievalService,
     private readonly llm: LlmService,
     private readonly collections: CollectionService,
@@ -102,11 +109,15 @@ export class ChatService {
     const documentId = dto.documentId ?? null;
     await this.validateScope(workspaceId, collectionId, documentId);
 
+    // Resolve follow-ups against the conversation before searching. Returns the
+    // question untouched on the first turn, when disabled, or on failure.
+    const searchQuery = await this.rewriter.rewrite(question, priorMessages);
+
     // Retrieve relevant chunks within the resolved scope.
     const chunks = await this.retrieval.retrieve(
       workspaceId,
       { collectionId, documentId },
-      question,
+      searchQuery,
       this.topKValue(),
     );
 
@@ -131,7 +142,10 @@ export class ChatService {
     );
 
     // Auto-title a brand-new conversation from its first question.
-    if (priorMessages.length === 0 && conversation.title === 'New conversation') {
+    if (
+      priorMessages.length === 0 &&
+      conversation.title === 'New conversation'
+    ) {
       await this.conversations.update(workspaceId, userId, conversationId, {
         title: question.slice(0, 80),
       });
@@ -160,10 +174,7 @@ export class ChatService {
 
     const context = chunks.length
       ? chunks
-          .map(
-            (c, i) =>
-              `[${i + 1}] (${describeSource(c)})\n${c.content}`,
-          )
+          .map((c, i) => `[${i + 1}] (${describeSource(c)})\n${c.content}`)
           .join('\n\n')
       : '(No relevant document passages were found for this question.)';
 

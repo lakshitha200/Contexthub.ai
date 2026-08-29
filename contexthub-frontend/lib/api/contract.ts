@@ -9,7 +9,7 @@ import type {
   CreateConversationPayload,
   CreateWorkspacePayload,
   Document,
-  DocStatus,
+  DocumentFilters,
   Invite,
   InviteMemberPayload,
   LoginPayload,
@@ -54,7 +54,7 @@ export interface Api {
     remove(workspaceId: string, id: string): Promise<void>;
   };
   documents: {
-    list(workspaceId: string, collectionId: string, status?: DocStatus): Promise<Document[]>;
+    list(workspaceId: string, collectionId: string, filters?: DocumentFilters): Promise<Document[]>;
     get(workspaceId: string, collectionId: string, id: string): Promise<Document>;
     upload(workspaceId: string, collectionId: string, file: File): Promise<Document>;
     reprocess(workspaceId: string, collectionId: string, id: string): Promise<void>;

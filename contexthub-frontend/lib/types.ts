@@ -9,9 +9,46 @@ export type DocStatus =
   | "UPLOADED"
   | "PARSING"
   | "CHUNKING"
+  | "ANALYZING"
   | "EMBEDDING"
   | "READY"
   | "FAILED";
+
+/**
+ * Closed set of document classifications, written during ingestion. Closed on
+ * purpose — an open-ended label can never be filtered on.
+ */
+export type DocType =
+  | "REPORT"
+  | "CONTRACT"
+  | "PROPOSAL"
+  | "PLAN"
+  | "POLICY"
+  | "MEETING_NOTES"
+  | "SPECIFICATION"
+  | "MANUAL"
+  | "PRESENTATION"
+  | "INVOICE"
+  | "RESEARCH"
+  | "CORRESPONDENCE"
+  | "OTHER";
+
+/** Human labels for DocType, for badges and filter chips. */
+export const DOC_TYPE_LABELS: Record<DocType, string> = {
+  REPORT: "Report",
+  CONTRACT: "Contract",
+  PROPOSAL: "Proposal",
+  PLAN: "Plan",
+  POLICY: "Policy",
+  MEETING_NOTES: "Meeting notes",
+  SPECIFICATION: "Spec",
+  MANUAL: "Manual",
+  PRESENTATION: "Presentation",
+  INVOICE: "Invoice",
+  RESEARCH: "Research",
+  CORRESPONDENCE: "Correspondence",
+  OTHER: "Other",
+};
 
 export type MessageRole = "USER" | "ASSISTANT";
 
@@ -104,10 +141,27 @@ export interface Document {
   sizeBytes: number;
   status: DocStatus;
   errorMessage: string | null;
+  /**
+   * Written once at ingest time by reading the document. Null when analysis is
+   * disabled, still running, or failed — always render defensively.
+   */
+  summary: string | null;
+  docType: DocType | null;
+  /** Lowercase topic keywords. Empty when analysis produced none. */
+  topics: string[];
+  analyzedAt: string | null;
   createdAt: string;
   updatedAt: string;
   /** Who uploaded it — included by the list endpoint. */
   uploader?: { id: string; name: string | null; email: string };
+}
+
+/** Server-side narrowing for the document list endpoint. */
+export interface DocumentFilters {
+  status?: DocStatus;
+  docType?: DocType;
+  /** A single topic keyword; matched against the document's topics array. */
+  topic?: string;
 }
 
 // ------------------------------------------------------------------

@@ -19,6 +19,17 @@ import { http } from "./http";
 
 const enc = encodeURIComponent;
 
+/** Build a `?a=1&b=2` string from defined values, or "" when there are none. */
+function query(params?: object): string {
+  if (!params) return "";
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === "string" && value) search.set(key, value);
+  }
+  const encoded = search.toString();
+  return encoded ? `?${encoded}` : "";
+}
+
 // ------------------------------------------------------------------
 // Normalizers — the backend nests counts under `_count` and returns the
 // caller's role only on list endpoints, so we flatten to the UI's flat types.
@@ -183,11 +194,9 @@ export const realApi: Api = {
 
   documents: {
     // All document routes are nested under the collection.
-    list: (ws, col, status) =>
+    list: (ws, col, filters) =>
       http.get<Document[]>(
-        `/workspaces/${enc(ws)}/collections/${enc(col)}/documents${
-          status ? `?status=${status}` : ""
-        }`,
+        `/workspaces/${enc(ws)}/collections/${enc(col)}/documents${query(filters)}`,
       ),
     get: (ws, col, id) =>
       http.get<Document>(

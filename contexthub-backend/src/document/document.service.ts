@@ -9,6 +9,7 @@ import { CollectionService } from '../collection/collection.service';
 import { JobService } from '../jobs/job.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import { ListDocumentsQueryDto } from './dto/list-documents.query';
 import { UploadedFileLike } from './dto/uploaded-file';
 
 const ALLOWED_MIME_TYPES = new Set([
@@ -68,7 +69,7 @@ export class DocumentService {
       },
     });
 
-    // Kick off the background ingestion pipeline (parse → chunk → embed).
+    // Kick off the background ingestion pipeline (parse → chunk → analyse → embed).
     await this.jobs.enqueue('ingest', { documentId: document.id });
 
     return document;
@@ -84,12 +85,22 @@ export class DocumentService {
   async list(
     workspaceId: string,
     collectionId: string,
-    status?: DocStatus,
+    filters: ListDocumentsQueryDto = {},
   ) {
     await this.collections.getById(workspaceId, collectionId);
 
+    const { status, docType, topic } = filters;
+
     return this.prisma.document.findMany({
-      where: { workspaceId, collectionId, ...(status ? { status } : {}) },
+      where: {
+        workspaceId,
+        collectionId,
+        ...(status ? { status } : {}),
+        ...(docType ? { docType } : {}),
+        // `has` compiles to `= ANY("topics")` — topics are stored lowercase and
+        // the DTO lowercases the query, so the match is case-insensitive.
+        ...(topic ? { topics: { has: topic } } : {}),
+      },
       orderBy: { createdAt: 'desc' },
       include: {
         uploader: { select: { id: true, name: true, email: true } },

@@ -109,4 +109,51 @@ export class LlmService implements OnModuleInit {
       throw new InternalServerErrorException(`LLM provider error: ${message}`);
     }
   }
+
+  /**
+   * Same call as `generate`, yielding text as it arrives instead of waiting for
+   * the whole answer.
+   *
+   * A full answer takes 2–4 seconds to compose. Streaming does not make that
+   * faster, but it moves *first output* to well under a second, which is the
+   * number a reader actually feels — and it is what lets read-aloud start on
+   * the first sentence rather than the last.
+   *
+   * Deltas are yielded raw. Trimming is the caller's job, once, at the end:
+   * trimming each fragment would eat the spaces between them.
+   */
+  async *generateStream(
+    turns: LlmTurn[],
+    systemInstruction: string,
+    options: LlmOptions = {},
+  ): AsyncGenerator<string> {
+    try {
+      const stream = await this.client.models.generateContentStream({
+        model: this.model,
+        contents: turns.map((t) => ({
+          role: t.role,
+          parts: [
+            ...(t.images ?? []).map((img) => ({
+              inlineData: { mimeType: img.mimeType, data: img.data },
+            })),
+            { text: t.text },
+          ],
+        })),
+        config: {
+          systemInstruction,
+          temperature: options.temperature ?? this.temperature,
+          maxOutputTokens: options.maxOutputTokens ?? this.maxOutputTokens,
+        },
+      });
+
+      for await (const chunk of stream) {
+        const text = chunk.text;
+        if (text) yield text;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Gemini stream failed: ${message}`);
+      throw new InternalServerErrorException(`LLM provider error: ${message}`);
+    }
+  }
 }

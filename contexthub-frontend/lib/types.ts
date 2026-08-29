@@ -194,8 +194,15 @@ export interface Message {
   content: string;
   citations: Citation[] | null;
   createdAt: string;
-  /** Client-only: true while an assistant reply is streaming in. */
+  /** Client-only: true before the first token arrives (typing indicator). */
   pending?: boolean;
+  /**
+   * Client-only: true while tokens are still arriving. The actions under an
+   * answer (sources, read aloud) wait for this to clear — citations don't
+   * exist until the answer is finished, and reading half a sentence aloud is
+   * worse than waiting a second.
+   */
+  streaming?: boolean;
   /** Client-only: the answer request failed (renders an inline error bubble). */
   error?: boolean;
   /**
@@ -226,6 +233,19 @@ export interface AskResponse {
   message: Message;
   citations: Citation[];
 }
+
+/**
+ * One frame of a streamed answer (POST .../messages/stream).
+ *
+ * `delta` is raw text as the model writes it. `done` arrives once, after the
+ * answer is saved, and is authoritative — it carries the real message id and
+ * the citations, neither of which exist until generation finishes. `error`
+ * replaces an HTTP error status, which cannot be sent once streaming started.
+ */
+export type AskStreamEvent =
+  | { type: "delta"; text: string }
+  | ({ type: "done" } & AskResponse)
+  | { type: "error"; statusCode: number; message: string };
 
 // ------------------------------------------------------------------
 // Request payloads (DTOs)

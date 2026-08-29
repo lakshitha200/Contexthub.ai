@@ -109,9 +109,89 @@ async function rawBlob(path: string, retry = true): Promise<Blob> {
   return res.blob();
 }
 
+/**
+ * POST a body and read the response as a Server-Sent Events stream, yielding
+ * each frame's parsed `data:` payload.
+ *
+ * `EventSource` can't be used here: it is GET-only and cannot set an
+ * Authorization header. Reading `response.body` gives us both, at the cost of
+ * parsing the frames ourselves — which is only a split on the blank-line
+ * separator, holding back the last partial frame until more bytes arrive.
+ */
+async function* rawStream<T>(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+  retry = true,
+): AsyncGenerator<T> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (tokenStore.access) headers.Authorization = `Bearer ${tokenStore.access}`;
+
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (res.status === 401 && retry && tokenStore.refresh) {
+    refreshing ??= doRefresh().finally(() => (refreshing = null));
+    const ok = await refreshing;
+    if (ok) {
+      yield* rawStream<T>(path, body, signal, false);
+      return;
+    }
+    tokenStore.clear();
+  }
+
+  if (!res.ok || !res.body) {
+    // The error arrives as a normal JSON body — the stream never started.
+    let message = res.statusText;
+    try {
+      const data = await res.json();
+      message = Array.isArray(data?.message)
+        ? data.message.join(", ")
+        : data?.message ?? message;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(res.status, message);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Frames are separated by a blank line; the tail is kept for next time.
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+
+      for (const frame of frames) {
+        const line = frame.split("\n").find((l) => l.startsWith("data:"));
+        if (!line) continue;
+        const payload = line.slice(5).trim();
+        if (!payload) continue;
+        yield JSON.parse(payload) as T;
+      }
+    }
+  } finally {
+    // Aborting mid-answer must not leave the connection open.
+    await reader.cancel().catch(() => {});
+  }
+}
+
 export const http = {
   get: <T>(path: string, opts?: FetchOpts) => raw<T>(path, { ...opts, method: "GET" }),
   getBlob: (path: string) => rawBlob(path),
+  postStream: <T>(path: string, body: unknown, signal?: AbortSignal) =>
+    rawStream<T>(path, body, signal),
   post: <T>(path: string, body?: unknown, opts?: FetchOpts) =>
     raw<T>(path, { ...opts, method: "POST", body }),
   patch: <T>(path: string, body?: unknown, opts?: FetchOpts) =>

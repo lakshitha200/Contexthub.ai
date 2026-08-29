@@ -4,7 +4,8 @@ import { motion } from "framer-motion";
 import { AlertCircle, RotateCw } from "lucide-react";
 import { SourcesButton } from "@/components/chat/citations";
 import { MessageContent } from "@/components/chat/message-content";
-import { TypingDots, useTypewriter } from "@/components/chat/typewriter";
+import { ReadAloudButton } from "@/components/chat/read-aloud-button";
+import { TypingDots } from "@/components/chat/typewriter";
 import { Logo } from "@/components/brand";
 import { Avatar } from "@/components/ui/avatar";
 import { useAuthStore } from "@/lib/store/auth-store";
@@ -15,15 +16,11 @@ type OpenSources = (citations: Citation[], focus?: Citation) => void;
 
 export function MessageBubble({
   message,
-  animate,
   onOpenSources,
-  onScroll,
   onRetry,
 }: {
   message: Message;
-  animate?: boolean;
   onOpenSources: OpenSources;
-  onScroll?: () => void;
   onRetry?: () => void;
 }) {
   const user = useAuthStore((s) => s.user);
@@ -68,29 +65,21 @@ export function MessageBubble({
   }
 
   return (
-    <AssistantBubble message={message} animate={animate} onOpenSources={onOpenSources} onScroll={onScroll} onRetry={onRetry} />
+    <AssistantBubble message={message} onOpenSources={onOpenSources} onRetry={onRetry} />
   );
 }
 
 function AssistantBubble({
   message,
-  animate,
   onOpenSources,
-  onScroll,
   onRetry,
 }: {
   message: Message;
-  animate?: boolean;
   onOpenSources: OpenSources;
-  onScroll?: () => void;
   onRetry?: () => void;
 }) {
-  const { shown, done } = useTypewriter(
-    message.content,
-    !!animate && !message.pending && !message.error,
-    onScroll,
-  );
-
+  // The answer arrives token by token from the server, so there is nothing to
+  // simulate — render whatever has landed so far.
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -127,12 +116,17 @@ function AssistantBubble({
           </div>
         ) : (
           <div className="rounded-2xl rounded-tl-md border border-border bg-card px-4 py-3 shadow-soft">
-            <MessageContent content={shown} />
-            {done && message.citations && message.citations.length > 0 && (
-              <SourcesButton
-                citations={message.citations}
-                onOpen={() => onOpenSources(message.citations ?? [])}
-              />
+            <MessageContent content={message.content} />
+            {!message.streaming && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {message.citations && message.citations.length > 0 && (
+                  <SourcesButton
+                    citations={message.citations}
+                    onOpen={() => onOpenSources(message.citations ?? [])}
+                  />
+                )}
+                <ReadAloudButton messageId={message.id} text={message.content} />
+              </div>
             )}
           </div>
         )}

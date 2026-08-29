@@ -1,6 +1,17 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ChunkKind, MessageRole, Prisma } from '../../generated/prisma/client';
+import {
+  ChunkKind,
+  MessageRole,
+  Prisma,
+  type Conversation,
+  type Message,
+} from '../../generated/prisma/client';
 import { CollectionService } from '../collection/collection.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConversationService } from './conversation.service';
@@ -8,6 +19,33 @@ import { AskDto } from './dto/ask.dto';
 import { LlmService, type LlmImage, type LlmTurn } from './llm.service';
 import { QueryRewriterService } from './query-rewriter.service';
 import { RetrievalService, type RetrievedChunk } from './retrieval.service';
+
+/** What `ask` returns, and what a stream's final `done` event carries. */
+export interface AskResult {
+  message: Message;
+  citations: Citation[];
+}
+
+/**
+ * One frame of a streamed answer.
+ *
+ * `delta` carries raw text as the model writes it. `done` arrives once, after
+ * the answer is persisted, and is the authoritative version — it carries the
+ * real message id and the citations, neither of which exist until generation
+ * has finished.
+ */
+export type AskStreamEvent =
+  | { type: 'delta'; text: string }
+  | ({ type: 'done' } & AskResult);
+
+/** Everything `prepare()` works out before the model is called. */
+interface PreparedTurn {
+  conversation: Conversation;
+  priorMessages: Array<{ role: MessageRole; content: string }>;
+  question: string;
+  chunks: RetrievedChunk[];
+  turns: LlmTurn[];
+}
 
 /** A source reference attached to an assistant answer. */
 export interface Citation {
@@ -71,12 +109,82 @@ export class ChatService {
     private readonly config: ConfigService,
   ) {}
 
+  /** Ask and wait for the whole answer. */
   async ask(
     workspaceId: string,
     userId: string,
     conversationId: string,
     dto: AskDto,
-  ) {
+  ): Promise<AskResult> {
+    const turn = await this.prepare(workspaceId, userId, conversationId, dto);
+
+    // Hybrid: always let the LLM answer. It grounds + cites when the passages
+    // are relevant, and answers greetings / general questions conversationally
+    // otherwise. We then attach ONLY the sources the answer actually cited, so
+    // small talk shows no citations and document answers stay grounded.
+    const answer = await this.llm.generate(turn.turns, SYSTEM_INSTRUCTION);
+
+    return this.finalize(workspaceId, userId, conversationId, turn, answer);
+  }
+
+  /**
+   * Ask and emit the answer as it is written.
+   *
+   * Identical to `ask` up to generation — same rewrite, same retrieval, same
+   * prompt — and identical after it: the answer is persisted with the same
+   * citation filtering. The only difference is that the caller sees the text
+   * arrive instead of waiting for it.
+   *
+   * The generator always runs to completion once generation starts, even if the
+   * client has disconnected, so a paid-for answer is never lost: the user finds
+   * it waiting when they reload.
+   */
+  async *askStream(
+    workspaceId: string,
+    userId: string,
+    conversationId: string,
+    dto: AskDto,
+  ): AsyncGenerator<AskStreamEvent> {
+    const turn = await this.prepare(workspaceId, userId, conversationId, dto);
+
+    let answer = '';
+    for await (const delta of this.llm.generateStream(
+      turn.turns,
+      SYSTEM_INSTRUCTION,
+    )) {
+      answer += delta;
+      yield { type: 'delta', text: delta };
+    }
+
+    // Trim once, at the end — trimming each delta would eat the spaces between.
+    const complete = answer.trim();
+    if (!complete) {
+      throw new InternalServerErrorException(
+        'LLM provider error: model returned an empty response',
+      );
+    }
+
+    const result = await this.finalize(
+      workspaceId,
+      userId,
+      conversationId,
+      turn,
+      complete,
+    );
+    yield { type: 'done', ...result };
+  }
+
+  /**
+   * Everything before generation: ownership, history, the persisted question,
+   * scope, the rewritten search query, retrieval, and the assembled prompt.
+   * Shared verbatim by both `ask` and `askStream`.
+   */
+  private async prepare(
+    workspaceId: string,
+    userId: string,
+    conversationId: string,
+    dto: AskDto,
+  ): Promise<PreparedTurn> {
     const conversation = await this.conversations.getOwnedOrThrow(
       workspaceId,
       userId,
@@ -121,16 +229,26 @@ export class ChatService {
       this.topKValue(),
     );
 
-    // Hybrid: always let the LLM answer. It grounds + cites when the passages
-    // are relevant, and answers greetings / general questions conversationally
-    // otherwise. We then attach ONLY the sources the answer actually cited, so
-    // small talk shows no citations and document answers stay grounded.
-    const turns = this.buildTurns(priorMessages, question, chunks, images);
-    const answer = await this.llm.generate(turns, SYSTEM_INSTRUCTION);
+    return {
+      conversation,
+      priorMessages,
+      question,
+      chunks,
+      turns: this.buildTurns(priorMessages, question, chunks, images),
+    };
+  }
 
+  /** Everything after generation: citations, persistence, auto-title. */
+  private async finalize(
+    workspaceId: string,
+    userId: string,
+    conversationId: string,
+    turn: PreparedTurn,
+    answer: string,
+  ): Promise<AskResult> {
     const cited = extractCitedIndices(answer);
-    const citations: Citation[] = chunks.length
-      ? this.toCitations(chunks).filter((c) => cited.has(c.index))
+    const citations: Citation[] = turn.chunks.length
+      ? this.toCitations(turn.chunks).filter((c) => cited.has(c.index))
       : [];
 
     const assistant = await this.conversations.addMessage(
@@ -143,16 +261,16 @@ export class ChatService {
 
     // Auto-title a brand-new conversation from its first question.
     if (
-      priorMessages.length === 0 &&
-      conversation.title === 'New conversation'
+      turn.priorMessages.length === 0 &&
+      turn.conversation.title === 'New conversation'
     ) {
       await this.conversations.update(workspaceId, userId, conversationId, {
-        title: question.slice(0, 80),
+        title: turn.question.slice(0, 80),
       });
     }
 
     this.logger.log(
-      `Answered conversation ${conversationId}: ${chunks.length} chunks retrieved`,
+      `Answered conversation ${conversationId}: ${turn.chunks.length} chunks retrieved`,
     );
 
     return { message: assistant, citations };

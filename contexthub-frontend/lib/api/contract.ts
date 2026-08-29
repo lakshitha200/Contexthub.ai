@@ -2,6 +2,7 @@
 import type {
   AskPayload,
   AskResponse,
+  AskStreamEvent,
   AuthResponse,
   Collection,
   Conversation,
@@ -74,6 +75,16 @@ export interface Api {
     removeConversation(workspaceId: string, id: string): Promise<void>;
     listMessages(workspaceId: string, id: string): Promise<Message[]>;
     ask(workspaceId: string, conversationId: string, p: AskPayload): Promise<AskResponse>;
+    /**
+     * The same question, streamed. Yields `delta` frames as the answer is
+     * written, then exactly one `done` (or `error`). Pass a signal to abort.
+     */
+    askStream(
+      workspaceId: string,
+      conversationId: string,
+      p: AskPayload,
+      signal?: AbortSignal,
+    ): AsyncGenerator<AskStreamEvent>;
     /**
      * Object URL for the chart/diagram behind an IMAGE citation. The endpoint
      * needs the auth header, so the blob is fetched and wrapped rather than

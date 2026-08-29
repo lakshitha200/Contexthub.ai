@@ -2,6 +2,7 @@
 import { tokenStore } from "../token-store";
 import type {
   AskResponse,
+  AskStreamEvent,
   AuthResponse,
   Collection,
   Conversation,
@@ -247,6 +248,12 @@ export const realApi: Api = {
       http.get<Message[]>(`/workspaces/${enc(ws)}/conversations/${enc(id)}/messages`),
     ask: (ws, id, p) =>
       http.post<AskResponse>(`/workspaces/${enc(ws)}/conversations/${enc(id)}/messages`, p),
+    askStream: (ws, id, p, signal) =>
+      http.postStream<AskStreamEvent>(
+        `/workspaces/${enc(ws)}/conversations/${enc(id)}/messages/stream`,
+        p,
+        signal,
+      ),
     async chunkImageUrl(ws, chunkId) {
       const blob = await http.getBlob(
         `/workspaces/${enc(ws)}/chunks/${enc(chunkId)}/image`,

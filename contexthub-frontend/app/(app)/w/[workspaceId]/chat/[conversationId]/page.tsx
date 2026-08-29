@@ -45,13 +45,14 @@ function ConversationView({
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [animateId, setAnimateId] = useState<string | null>(null);
   const [sources, setSources] = useState<{ list: Citation[]; focusDocId?: string } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentQ = useRef(false);
   /** Images from the last question, so a retry can resend the same bytes. */
   const lastAttachments = useRef<PendingAttachment[]>([]);
+  /** The in-flight answer stream, so navigating away can abort it. */
+  const streamRef = useRef<AbortController | null>(null);
 
   const scrollToBottom = useCallback((smooth = true) => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: smooth ? "smooth" : "auto" });
@@ -77,28 +78,63 @@ function ConversationView({
       setMessages((m) => [...m.filter((x) => !x.error), pending]);
       requestAnimationFrame(() => scrollToBottom());
 
+      // Aborted when the user leaves the conversation mid-answer.
+      const controller = new AbortController();
+      streamRef.current?.abort();
+      streamRef.current = controller;
+
       try {
-        const { message } = await api.chat.ask(workspaceId, conversationId, {
-          content: text,
-          images: attachments.length ? attachments.map((a) => a.image) : undefined,
-        });
-        setMessages((m) => m.filter((x) => x.id !== pendingId).concat(message));
-        setAnimateId(message.id);
-        // Read the answer aloud when the user has voice read-aloud enabled.
-        if (useVoiceStore.getState().readAloud) {
-          useVoiceStore.getState().speak(message.content);
+        let streamed = "";
+        let settled = false;
+
+        for await (const event of api.chat.askStream(
+          workspaceId,
+          conversationId,
+          {
+            content: text,
+            images: attachments.length ? attachments.map((a) => a.image) : undefined,
+          },
+          controller.signal,
+        )) {
+          if (event.type === "delta") {
+            streamed += event.text;
+            // First token: swap the typing dots for the answer as it arrives.
+            setMessages((m) =>
+              m.map((x) =>
+                x.id === pendingId
+                  ? { ...x, pending: false, streaming: true, content: streamed }
+                  : x,
+              ),
+            );
+            scrollToBottom();
+          } else if (event.type === "done") {
+            settled = true;
+            // The real row — carries the persisted id and the citations, which
+            // only exist once the whole answer has been written.
+            setMessages((m) =>
+              m.map((x) => (x.id === pendingId ? event.message : x)),
+            );
+          } else {
+            throw new Error(event.message);
+          }
         }
+
+        if (!settled) throw new Error("The answer ended unexpectedly.");
+
         // Refresh conversation meta (title may have been set on first turn).
         const conv = await api.chat.getConversation(workspaceId, conversationId);
         setConversation(conv);
         upsert(conv);
       } catch {
+        // Leaving the page aborts the stream — that is not a failure to report.
+        if (controller.signal.aborted) return;
         setMessages((m) =>
           m.map((x) =>
             x.id === pendingId ? { ...x, pending: false, error: true, content: "" } : x,
           ),
         );
       } finally {
+        if (streamRef.current === controller) streamRef.current = null;
         setBusy(false);
       }
     },
@@ -107,7 +143,7 @@ function ConversationView({
 
   const send = useCallback(
     (text: string, attachments: PendingAttachment[] = []) => {
-      useVoiceStore.getState().stopSpeaking(); // interrupt any answer being read
+      useVoiceStore.getState().stop(); // interrupt any answer being read
       const tempUser: Message = {
         id: `tmp_${Date.now()}`,
         conversationId,
@@ -155,9 +191,15 @@ function ConversationView({
     };
   }, [workspaceId, conversationId, toast]);
 
-  // Stop any read-aloud when leaving the conversation or switching chats.
+  // Leaving the conversation stops anything still talking and drops the
+  // in-flight stream. The backend finishes and saves the answer regardless, so
+  // it is waiting here on the way back.
   useEffect(() => {
-    return () => useVoiceStore.getState().stopSpeaking();
+    return () => {
+      useVoiceStore.getState().stop();
+      streamRef.current?.abort();
+      streamRef.current = null;
+    };
   }, [conversationId]);
 
   // Auto-send the handoff question from the "new chat" screen (once), together
@@ -222,11 +264,9 @@ function ConversationView({
               <MessageBubble
                 key={m.id}
                 message={m}
-                animate={m.id === animateId}
                 onOpenSources={(list, focus) =>
                   setSources({ list, focusDocId: focus?.documentId })
                 }
-                onScroll={() => scrollToBottom(false)}
                 onRetry={m.error ? retry : undefined}
               />
             ))

@@ -65,14 +65,14 @@ export default function ProfilePage() {
               <div>
                 <p className="text-sm font-medium">{user?.email}</p>
                 <p className="text-xs text-muted-foreground">
-                  Joined {user ? formatDate(user.createdAt) : "—"}
+                  Joined {user ? formatDate(user.createdAt) : "recently"}
                 </p>
               </div>
             </div>
             <Field label="Display name">
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" maxLength={100} />
             </Field>
-            <Field label="Avatar URL" hint="Optional — link to an image.">
+            <Field label="Avatar URL" hint="Optional. Link to an image.">
               <Input value={avatarUrl} onChange={(e) => setAvatarUrl(e.target.value)} placeholder="https://…" />
             </Field>
             <div className="flex justify-end">

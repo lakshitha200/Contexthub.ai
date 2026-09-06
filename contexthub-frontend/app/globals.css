@@ -5,84 +5,126 @@
 
 /* ------------------------------------------------------------------ */
 /*  Design tokens                                                      */
+/*                                                                     */
+/*  Palette: "Iris Aurora". A deep indigo core warms through violet    */
+/*  into a cyan tail. The cyan is what keeps the brand off the         */
+/*  generic purple SaaS gradient, and it doubles as the retrieval      */
+/*  accent (citations, sources, scopes) so the colour carries meaning  */
+/*  rather than just decoration.                                       */
 /* ------------------------------------------------------------------ */
 :root {
-  --background: #fbfbfd;
-  --foreground: #18181b;
+  --background: #fcfcff;
+  --foreground: #14141c;
 
   --card: #ffffff;
-  --card-foreground: #18181b;
+  --card-foreground: #14141c;
 
   --popover: #ffffff;
-  --popover-foreground: #18181b;
+  --popover-foreground: #14141c;
 
-  --primary: #6d5efc;
+  --primary: #5b4df5;
   --primary-foreground: #ffffff;
 
-  --secondary: #f4f4f6;
-  --secondary-foreground: #27272a;
+  --secondary: #f2f2f8;
+  --secondary-foreground: #26262f;
 
-  --muted: #f4f4f6;
-  --muted-foreground: #71717a;
+  --muted: #f2f2f8;
+  --muted-foreground: #6c6c7c;
 
-  --accent: #eef0ff;
-  --accent-foreground: #4f46e5;
+  --accent: #eeecff;
+  --accent-foreground: #4a3fd4;
 
-  --success: #16a34a;
+  /* Retrieval accent: citations, source chips, scope pills. */
+  --cyan: #0891b2;
+  --cyan-soft: #e0f7fc;
+
+  --success: #12a150;
   --warning: #d97706;
   --danger: #e11d48;
   --danger-foreground: #ffffff;
 
-  --border: #ececef;
-  --input: #e6e6ea;
-  --ring: #6d5efc;
+  --border: #e9e9f1;
+  --input: #e2e2ec;
+  --ring: #5b4df5;
 
-  --sidebar: #f7f7f9;
-  --sidebar-foreground: #3f3f46;
+  --sidebar: #f7f7fc;
+  --sidebar-foreground: #3c3c49;
 
   --radius: 0.85rem;
 
-  --gradient-brand: linear-gradient(135deg, #7c6bff 0%, #a78bfa 45%, #f0abfc 100%);
-  --shadow-soft: 0 1px 2px rgba(24, 24, 27, 0.04), 0 8px 24px -12px rgba(24, 24, 27, 0.12);
-  --shadow-pop: 0 2px 8px rgba(24, 24, 27, 0.06), 0 24px 48px -20px rgba(24, 24, 27, 0.24);
+  /* Brand gradients. `brand` fills solid surfaces (logo tile, panels),
+     `text` is tuned darker at the tail so gradient text stays readable
+     on white, `sheen` is the moving highlight used on hover. */
+  --gradient-brand: linear-gradient(135deg, #4338ca 0%, #6d5ef9 38%, #a855f7 68%, #22d3ee 100%);
+  --gradient-text: linear-gradient(115deg, #4338ca 0%, #7c3aed 52%, #0891b2 100%);
+  --gradient-sheen: linear-gradient(
+    115deg,
+    transparent 0%,
+    color-mix(in oklab, #ffffff 55%, transparent) 50%,
+    transparent 100%
+  );
+
+  --shadow-soft: 0 1px 2px rgba(20, 20, 28, 0.04), 0 8px 24px -12px rgba(20, 20, 28, 0.12);
+  --shadow-pop: 0 2px 8px rgba(20, 20, 28, 0.06), 0 24px 48px -20px rgba(20, 20, 28, 0.22);
+  --shadow-glow: 0 0 0 1px color-mix(in oklab, var(--primary) 18%, transparent),
+    0 12px 40px -12px color-mix(in oklab, var(--primary) 45%, transparent);
+
+  /* One easing curve for the whole app so motion feels like one system. */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out-soft: cubic-bezier(0.65, 0, 0.35, 1);
 }
 
 .dark {
-  --background: #09090b;
-  --foreground: #f4f4f5;
+  --background: #08080c;
+  --foreground: #f3f3f7;
 
-  --card: #131316;
-  --card-foreground: #f4f4f5;
+  --card: #121218;
+  --card-foreground: #f3f3f7;
 
-  --popover: #16161a;
-  --popover-foreground: #f4f4f5;
+  --popover: #15151c;
+  --popover-foreground: #f3f3f7;
 
   --primary: #8b7dff;
-  --primary-foreground: #0b0b0f;
+  --primary-foreground: #0a0a10;
 
-  --secondary: #1c1c20;
-  --secondary-foreground: #e4e4e7;
+  --secondary: #1b1b23;
+  --secondary-foreground: #e3e3ea;
 
-  --muted: #1a1a1e;
-  --muted-foreground: #8b8b93;
+  --muted: #191921;
+  --muted-foreground: #8a8a99;
 
-  --accent: #1e1b3a;
+  --accent: #1e1a3d;
   --accent-foreground: #c4b5fd;
+
+  --cyan: #4dd8ef;
+  --cyan-soft: #0d2f38;
 
   --success: #22c55e;
   --warning: #f59e0b;
   --danger: #fb7185;
-  --danger-foreground: #0b0b0f;
+  --danger-foreground: #0a0a10;
 
-  --border: #232328;
-  --input: #2a2a30;
+  --border: #222229;
+  --input: #292932;
   --ring: #8b7dff;
 
-  --sidebar: #0e0e11;
-  --sidebar-foreground: #a1a1aa;
+  --sidebar: #0d0d13;
+  --sidebar-foreground: #a0a0b0;
+
+  /* Brighter tail in the dark: the cyan has to survive a black ground. */
+  --gradient-brand: linear-gradient(135deg, #6366f1 0%, #8b7dff 38%, #c084fc 68%, #67e8f9 100%);
+  --gradient-text: linear-gradient(115deg, #a5b4fc 0%, #c4b5fd 52%, #67e8f9 100%);
+  --gradient-sheen: linear-gradient(
+    115deg,
+    transparent 0%,
+    color-mix(in oklab, #ffffff 14%, transparent) 50%,
+    transparent 100%
+  );
 
   --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
   --shadow-pop: 0 2px 8px rgba(0, 0, 0, 0.5), 0 24px 48px -20px rgba(0, 0, 0, 0.8);
+  --shadow-glow: 0 0 0 1px color-mix(in oklab, var(--primary) 28%, transparent),
+    0 12px 40px -12px color-mix(in oklab, var(--primary) 55%, transparent);
 }
 
 /* ------------------------------------------------------------------ */
@@ -103,6 +145,8 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-cyan: var(--cyan);
+  --color-cyan-soft: var(--cyan-soft);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
@@ -123,6 +167,7 @@
 
   --shadow-soft: var(--shadow-soft);
   --shadow-pop: var(--shadow-pop);
+  --shadow-glow: var(--shadow-glow);
 
   --animate-shimmer: shimmer 1.6s linear infinite;
 }
@@ -136,6 +181,7 @@
   }
   html {
     -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
   }
   body {
     background: var(--color-background);
@@ -150,10 +196,48 @@
     outline-offset: 2px;
     border-radius: 4px;
   }
+  /* Theme flips should glide, not snap. Scoped to the properties that
+     actually change so it never fights component-level transitions. */
+  body,
+  aside,
+  header,
+  main {
+    transition:
+      background-color 0.35s var(--ease-out-soft),
+      border-color 0.35s var(--ease-out-soft),
+      color 0.35s var(--ease-out-soft);
+  }
+}
+
+/* Scroll reveals are rendered by Framer Motion, which writes its `initial`
+   variant into the server HTML. That means every revealed section ships as
+   opacity 0 and only becomes visible once JavaScript hydrates. On a public
+   marketing page that is a blank page for anyone whose scripts failed to
+   load, so force the content visible when scripting is unavailable.
+
+   Both rules are needed: `scripting: none` covers modern browsers with JS
+   turned off, and the <noscript> block in the root layout covers the rest. */
+@media (scripting: none) {
+  [data-reveal] {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+/* Anyone who asked the OS for less motion gets none of the ambient kind. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* ------------------------------------------------------------------ */
-/*  Utilities & keyframes                                              */
+/*  Keyframes                                                          */
 /* ------------------------------------------------------------------ */
 @keyframes shimmer {
   0% {
@@ -165,13 +249,18 @@
 }
 
 @keyframes caret-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
 }
 
 /* Halo that expands out of the mic button while it is listening. Scales the
    ring outward and fades it, so the button reads as "open" rather than
-   "recording" — a pulsing red fill implies capture, which this isn't. */
+   "recording". A pulsing red fill implies capture, which this isn't. */
 @keyframes voice-halo {
   0% {
     transform: scale(1);
@@ -187,16 +276,104 @@
   }
 }
 
+/* ------------------------------------------------------------------ */
+/*  Brand utilities                                                    */
+/* ------------------------------------------------------------------ */
+/* Gradient text.
+   Two things make this fragile and both are handled here. WebKit needs
+   `-webkit-text-fill-color`, because plain `color: transparent` gets
+   overridden by any later colour rule and the text vanishes into the
+   background. And a browser without `background-clip: text` would render
+   transparent text on no background at all, so the @supports block below
+   falls back to a solid brand colour instead of an invisible word.
+
+   `inline-block` gives the gradient a real box to paint across; on a bare
+   inline element the background box is the line fragment, which can collapse
+   and leave nothing to clip. */
 .text-gradient {
-  background: var(--gradient-brand);
+  display: inline-block;
+  background-image: var(--gradient-text);
+  background-size: 100% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+@supports not ((background-clip: text) or (-webkit-background-clip: text)) {
+  .text-gradient {
+    background-image: none;
+    color: var(--primary);
+    -webkit-text-fill-color: var(--primary);
+  }
 }
 
 .bg-gradient-brand {
   background: var(--gradient-brand);
 }
+
+/* Kept as a named class so callers do not have to change, but no longer
+   animated. Drifting a gradient means animating `background-position`, which
+   repaints the element on every frame rather than compositing it, and this
+   class sits on the logo and on every beta pill. Several elements repainting
+   forever is not worth a shimmer nobody consciously notices. */
+.bg-gradient-brand-live {
+  background: var(--gradient-brand);
+}
+
+/* A 1px gradient outline. Two backgrounds with different clip boxes is the
+   only way to stroke a border with a gradient and keep the radius. */
+.border-gradient {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--color-card), var(--color-card)) padding-box,
+    var(--gradient-brand) border-box;
+}
+
+/* Highlight that sweeps once on hover. Parent needs `group` + `relative`. */
+.sheen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--gradient-sheen);
+  transform: translateX(-120%);
+  transition: transform 0.7s var(--ease-out-soft);
+  pointer-events: none;
+}
+.group:hover .sheen::after {
+  transform: translateX(120%);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Motion utilities                                                   */
+/* ------------------------------------------------------------------ */
+
+/* The default interaction feel: lift slightly, deepen the shadow, warm the
+   border toward the brand. Applied to every clickable card in the app.
+
+   Deliberately no `will-change: transform` at rest. There are a dozen or more
+   of these on a page, and a standing will-change promotes every one of them to
+   its own compositor layer for a hover that may never happen. That memory and
+   layer count is paid during scrolling, which is exactly when it hurts. */
+.hover-lift {
+  transition:
+    transform 0.25s var(--ease-out-soft),
+    box-shadow 0.25s var(--ease-out-soft),
+    border-color 0.25s var(--ease-out-soft);
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-pop);
+  border-color: color-mix(in oklab, var(--primary) 35%, var(--border));
+}
+.hover-lift:active {
+  transform: translateY(0);
+  transition-duration: 0.08s;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Surfaces                                                           */
+/* ------------------------------------------------------------------ */
 
 /* Thin, unobtrusive scrollbars */
 .scroll-slim {
@@ -221,4 +398,59 @@
     linear-gradient(to right, color-mix(in oklab, var(--color-border) 60%, transparent) 1px, transparent 1px),
     linear-gradient(to bottom, color-mix(in oklab, var(--color-border) 60%, transparent) 1px, transparent 1px);
   background-size: 44px 44px;
+}
+
+/* Soft coloured wash behind hero and empty states. Sits at the very back,
+   never intercepts clicks.
+
+   Static, and with no `filter`. Radial gradients with soft stops already look
+   blurred, so the blur pass bought nothing and cost a full-size filter on a
+   large element. Animating it was worse: a perpetually moving blurred layer
+   keeps the compositor busy for the whole time the page is open, and that
+   shows up as stutter the moment you scroll. */
+.bg-aurora {
+  position: relative;
+  isolation: isolate;
+}
+.bg-aurora::before {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(38% 42% at 22% 28%, color-mix(in oklab, var(--primary) 24%, transparent) 0%, transparent 70%),
+    radial-gradient(34% 38% at 78% 30%, color-mix(in oklab, var(--cyan) 20%, transparent) 0%, transparent 70%),
+    radial-gradient(40% 44% at 58% 82%, color-mix(in oklab, #a855f7 18%, transparent) 0%, transparent 72%);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Sticky site header                                                 */
+/*                                                                     */
+/*  Fully opaque, on purpose.                                          */
+/*                                                                     */
+/*  A translucent sticky bar costs more than it looks. `backdrop-filter`*/
+/*  makes the browser re-blur everything behind the header on every    */
+/*  frame of every scroll, which is the single most expensive thing on */
+/*  a long page, and any transparency at all lets body text read       */
+/*  through the nav. Solid fixes both at once: the header is always    */
+/*  legible and scrolling costs nothing to composite.                  */
+/*                                                                     */
+/*  Only the edge changes on scroll, and border and shadow are cheap   */
+/*  to animate because neither triggers layout or repaint of the page. */
+/* ------------------------------------------------------------------ */
+.site-header {
+  background: var(--color-background);
+  border-bottom: 1px solid transparent;
+  transition:
+    border-color 0.25s var(--ease-out-soft),
+    box-shadow 0.25s var(--ease-out-soft);
+}
+
+/* Once the page has moved, give the bar a real edge so it separates from the
+   content sliding underneath it. */
+.site-header[data-scrolled="true"],
+.site-header[data-open="true"] {
+  border-bottom-color: var(--color-border);
+  box-shadow: var(--shadow-soft);
 }

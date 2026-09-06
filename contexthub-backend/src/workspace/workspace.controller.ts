@@ -88,6 +88,23 @@ export class WorkspaceController {
   }
 
   @UseGuards(WorkspaceGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  @Get(':id/invites')
+  listInvites(@Param('id') id: string) {
+    return this.workspaces.listInvites(id);
+  }
+
+  @UseGuards(WorkspaceGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  @Delete(':id/invites/:inviteId')
+  revokeInvite(
+    @Param('id') id: string,
+    @Param('inviteId') inviteId: string,
+  ) {
+    return this.workspaces.revokeInvite(id, inviteId);
+  }
+
+  @UseGuards(WorkspaceGuard)
   @Roles(Role.OWNER)
   @Patch(':id/members/:userId')
   updateMemberRole(

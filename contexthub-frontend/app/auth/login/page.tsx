@@ -40,7 +40,8 @@ function LoginInner() {
     try {
       await login({ email, password });
       toast("success", "Welcome back!");
-      router.replace("/workspaces");
+      const next = params.get("next");
+      router.replace(next && next.startsWith("/") ? next : "/workspaces");
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Something went wrong";
       setError(message);

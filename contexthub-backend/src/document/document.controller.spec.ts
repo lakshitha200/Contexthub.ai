@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { DocStatus, DocType } from '../../generated/prisma/client';
 import { WorkspaceGuard } from '../workspace/guards/workspace.guard';
 import { DocumentController } from './document.controller';
 import { DocumentService } from './document.service';
@@ -49,8 +50,20 @@ describe('DocumentController', () => {
     );
   });
 
-  it('lists documents with an optional status filter', async () => {
+  it('lists documents with no filters', async () => {
     await controller.list('ws-1', 'col-1', {});
-    expect(serviceMock.list).toHaveBeenCalledWith('ws-1', 'col-1', undefined);
+    expect(serviceMock.list).toHaveBeenCalledWith('ws-1', 'col-1', {});
+  });
+
+  it('forwards the whole query so status, docType and topic all reach the service', async () => {
+    const query = {
+      status: DocStatus.READY,
+      docType: DocType.CONTRACT,
+      topic: 'pricing',
+    };
+
+    await controller.list('ws-1', 'col-1', query);
+
+    expect(serviceMock.list).toHaveBeenCalledWith('ws-1', 'col-1', query);
   });
 });

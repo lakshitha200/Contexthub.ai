@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { WorkspaceGuard } from './guards/workspace.guard';
 import { WorkspaceController } from './workspace.controller';
 import { WorkspaceService } from './workspace.service';
 
@@ -23,7 +24,12 @@ describe('WorkspaceController', () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [WorkspaceController],
       providers: [{ provide: WorkspaceService, useValue: serviceMock }],
-    }).compile();
+    })
+      // WorkspaceGuard is wired in the real module and pulls in PrismaService;
+      // bypass it in unit tests, as the other controller specs do.
+      .overrideGuard(WorkspaceGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     controller = module.get<WorkspaceController>(WorkspaceController);
   });

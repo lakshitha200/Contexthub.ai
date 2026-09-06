@@ -2,25 +2,25 @@
 
 import { motion } from "framer-motion";
 import { AlertCircle, RotateCw } from "lucide-react";
-import { CitationsList } from "@/components/chat/citations";
+import { SourcesButton } from "@/components/chat/citations";
 import { MessageContent } from "@/components/chat/message-content";
-import { TypingDots, useTypewriter } from "@/components/chat/typewriter";
+import { ReadAloudButton } from "@/components/chat/read-aloud-button";
+import { TypingDots } from "@/components/chat/typewriter";
 import { Logo } from "@/components/brand";
 import { Avatar } from "@/components/ui/avatar";
 import { useAuthStore } from "@/lib/store/auth-store";
 import type { Citation, Message } from "@/lib/types";
 
+/** Opens the sources panel; `focus` scrolls to a specific citation. */
+type OpenSources = (citations: Citation[], focus?: Citation) => void;
+
 export function MessageBubble({
   message,
-  animate,
-  onCite,
-  onScroll,
+  onOpenSources,
   onRetry,
 }: {
   message: Message;
-  animate?: boolean;
-  onCite: (c: Citation) => void;
-  onScroll?: () => void;
+  onOpenSources: OpenSources;
   onRetry?: () => void;
 }) {
   const user = useAuthStore((s) => s.user);
@@ -33,8 +33,31 @@ export function MessageBubble({
         transition={{ duration: 0.25 }}
         className="flex justify-end gap-3"
       >
-        <div className="max-w-[80%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[15px] leading-relaxed text-primary-foreground shadow-soft">
-          {message.content}
+        <div className="flex max-w-[80%] flex-col items-end gap-1.5">
+          {message.attachments && message.attachments.length > 0 && (
+            <div className="flex flex-wrap justify-end gap-1.5">
+              {message.attachments.map((src, i) => (
+                <a
+                  key={i}
+                  href={src}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block h-24 w-24 overflow-hidden rounded-xl border border-border bg-secondary shadow-soft transition-transform hover:scale-[1.03]"
+                >
+                  {/* Object URL of a local file — next/image can't optimise blob: */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={src}
+                    alt={`Attachment ${i + 1}`}
+                    className="h-full w-full object-cover"
+                  />
+                </a>
+              ))}
+            </div>
+          )}
+          <div className="rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[15px] leading-relaxed text-primary-foreground shadow-soft">
+            {message.content}
+          </div>
         </div>
         <Avatar name={user?.name ?? user?.email} src={user?.avatarUrl} size={32} className="mt-0.5" />
       </motion.div>
@@ -42,29 +65,21 @@ export function MessageBubble({
   }
 
   return (
-    <AssistantBubble message={message} animate={animate} onCite={onCite} onScroll={onScroll} onRetry={onRetry} />
+    <AssistantBubble message={message} onOpenSources={onOpenSources} onRetry={onRetry} />
   );
 }
 
 function AssistantBubble({
   message,
-  animate,
-  onCite,
-  onScroll,
+  onOpenSources,
   onRetry,
 }: {
   message: Message;
-  animate?: boolean;
-  onCite: (c: Citation) => void;
-  onScroll?: () => void;
+  onOpenSources: OpenSources;
   onRetry?: () => void;
 }) {
-  const { shown, done } = useTypewriter(
-    message.content,
-    !!animate && !message.pending && !message.error,
-    onScroll,
-  );
-
+  // The answer arrives token by token from the server, so there is nothing to
+  // simulate — render whatever has landed so far.
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -101,13 +116,17 @@ function AssistantBubble({
           </div>
         ) : (
           <div className="rounded-2xl rounded-tl-md border border-border bg-card px-4 py-3 shadow-soft">
-            <MessageContent
-              content={shown}
-              citations={message.citations}
-              onCite={onCite}
-            />
-            {done && message.citations && message.citations.length > 0 && (
-              <CitationsList citations={message.citations} onOpen={onCite} />
+            <MessageContent content={message.content} />
+            {!message.streaming && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {message.citations && message.citations.length > 0 && (
+                  <SourcesButton
+                    citations={message.citations}
+                    onOpen={() => onOpenSources(message.citations ?? [])}
+                  />
+                )}
+                <ReadAloudButton messageId={message.id} text={message.content} />
+              </div>
             )}
           </div>
         )}

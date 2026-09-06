@@ -18,6 +18,8 @@ export function ScopeSelector({
 
   return (
     <Dropdown
+      side="top"
+      className="max-h-[55vh] overflow-y-auto"
       trigger={
         <button className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground/80 transition-colors hover:bg-secondary">
           {active ? (

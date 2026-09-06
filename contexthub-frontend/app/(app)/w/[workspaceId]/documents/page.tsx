@@ -16,6 +16,11 @@ import {
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { CollectionModal } from "@/components/documents/collection-modal";
+import {
+  DocTypeBadge,
+  DocumentSummary,
+  TopicChips,
+} from "@/components/documents/document-insights";
 import { FileTypeIcon } from "@/components/documents/file-icon";
 import { StatusBadge } from "@/components/documents/status-badge";
 import { UploadModal } from "@/components/documents/upload-modal";
@@ -26,9 +31,18 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
 import { useDocuments } from "@/lib/hooks/use-documents";
+import { useAuthStore } from "@/lib/store/auth-store";
 import { useWorkspace } from "@/lib/store/workspace-context";
-import type { Collection, Document } from "@/lib/types";
+import {
+  DOC_TYPE_LABELS,
+  type Collection,
+  type DocType,
+  type Document,
+} from "@/lib/types";
 import { cn, colorFromString, formatBytes, timeAgo } from "@/lib/utils";
+
+/** Topic chips beyond this are hidden — a long tail is noise, not a filter. */
+const MAX_TOPIC_FACETS = 12;
 
 export default function DocumentsPage() {
   return (
@@ -39,7 +53,8 @@ export default function DocumentsPage() {
 }
 
 function DocumentsView() {
-  const { workspaceId, collections, canManage, reloadCollections } = useWorkspace();
+  const { workspaceId, collections, canManage, reloadCollections, upsertCollection } = useWorkspace();
+  const me = useAuthStore((s) => s.user);
   const search = useSearchParams();
   const toast = useToast();
   const collectionParam = search.get("collection");
@@ -66,8 +81,43 @@ function DocumentsView() {
   const [colToDelete, setColToDelete] = useState<Collection | null>(null);
   const [colDeleting, setColDeleting] = useState(false);
 
+  // Filters on what ingestion recorded about each document. Applied client-side:
+  // the list is already loaded, so a chip should filter instantly rather than
+  // wait on a round trip. (The API supports ?docType= / ?topic= for consumers
+  // that aren't holding the full list.)
+  const [typeFilter, setTypeFilter] = useState<DocType | null>(null);
+  const [topicFilter, setTopicFilter] = useState<string | null>(null);
+
   const activeCollection = collections.find((c) => c.id === selected) ?? null;
   const totalDocs = collections.reduce((n, c) => n + (c.documentCount ?? 0), 0);
+
+  // Switching collections changes the population the facets came from, so a
+  // filter carried over would silently hide everything. Adjusted during render
+  // rather than in an effect — React's documented pattern for resetting state
+  // when the value it depends on changes, and it avoids a wasted second pass.
+  const [facetSource, setFacetSource] = useState(selected);
+  if (facetSource !== selected) {
+    setFacetSource(selected);
+    setTypeFilter(null);
+    setTopicFilter(null);
+  }
+
+  const typeFacets = countBy(documents, (d) => (d.docType ? [d.docType] : []));
+  const topicFacets = countBy(documents, (d) => d.topics ?? []).slice(
+    0,
+    MAX_TOPIC_FACETS,
+  );
+
+  const visible = documents.filter(
+    (d) =>
+      (!typeFilter || d.docType === typeFilter) &&
+      (!topicFilter || (d.topics ?? []).includes(topicFilter)),
+  );
+  const filtered = Boolean(typeFilter || topicFilter);
+
+  function toggleTopic(topic: string) {
+    setTopicFilter((current) => (current === topic ? null : topic));
+  }
 
   function openNewCollection() {
     setEditingCol(null);
@@ -195,7 +245,11 @@ function DocumentsView() {
                 {activeCollection ? activeCollection.name : "All documents"}
               </h1>
               <p className="mt-1 text-sm text-muted-foreground">
-                {loading ? "Loading…" : `${documents.length} document${documents.length === 1 ? "" : "s"}`}
+                {loading
+                  ? "Loading…"
+                  : filtered
+                    ? `${visible.length} of ${documents.length} document${documents.length === 1 ? "" : "s"}`
+                    : `${documents.length} document${documents.length === 1 ? "" : "s"}`}
                 {" · Processing happens automatically."}
               </p>
             </div>
@@ -228,6 +282,52 @@ function DocumentsView() {
             </div>
           )}
 
+          {/* Facets from what ingestion recorded. Absent until documents are
+              analyzed, so the bar simply doesn't render on a fresh workspace. */}
+          {!loading && (typeFacets.length > 0 || topicFacets.length > 0) && (
+            <div className="mb-5 space-y-2">
+              {typeFacets.length > 0 && (
+                <FacetRow label="Type">
+                  {typeFacets.map(({ value, count }) => (
+                    <Chip
+                      key={value}
+                      active={typeFilter === value}
+                      onClick={() =>
+                        setTypeFilter((current) =>
+                          current === value ? null : (value as DocType),
+                        )
+                      }
+                      label={`${DOC_TYPE_LABELS[value as DocType]} ${count}`}
+                    />
+                  ))}
+                </FacetRow>
+              )}
+              {topicFacets.length > 0 && (
+                <FacetRow label="Topic">
+                  {topicFacets.map(({ value }) => (
+                    <Chip
+                      key={value}
+                      active={topicFilter === value}
+                      onClick={() => toggleTopic(value)}
+                      label={value}
+                    />
+                  ))}
+                </FacetRow>
+              )}
+              {filtered && (
+                <button
+                  onClick={() => {
+                    setTypeFilter(null);
+                    setTopicFilter(null);
+                  }}
+                  className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Document list */}
           {loading ? (
             <div className="space-y-2">
@@ -249,9 +349,26 @@ function DocumentsView() {
               description="Upload PDFs, Word docs, or Markdown to build your knowledge base."
               action={<Button onClick={() => setUploadOpen(true)}><Upload className="h-4 w-4" /> Upload documents</Button>}
             />
+          ) : visible.length === 0 ? (
+            <EmptyState
+              icon={<FileText className="h-6 w-6" />}
+              title="No documents match"
+              description="No document here carries that type or topic."
+              action={
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setTypeFilter(null);
+                    setTopicFilter(null);
+                  }}
+                >
+                  Clear filters
+                </Button>
+              }
+            />
           ) : (
             <div className="space-y-2">
-              {documents.map((doc, i) => {
+              {visible.map((doc, i) => {
                 const collection = collections.find((c) => c.id === doc.collectionId);
                 return (
                   <motion.div
@@ -260,21 +377,38 @@ function DocumentsView() {
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.25, delay: Math.min(i * 0.03, 0.3) }}
-                    className="group flex items-center gap-3.5 rounded-xl border border-border bg-card p-3 shadow-soft transition-shadow hover:shadow-pop"
+                    className="group flex items-start gap-3.5 rounded-xl border border-border bg-card p-3 shadow-soft transition-shadow hover:shadow-pop"
                   >
                     <FileTypeIcon mimeType={doc.mimeType} filename={doc.filename} size={42} />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">{doc.filename}</p>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <p className="truncate text-sm font-medium">{doc.filename}</p>
+                        <DocTypeBadge docType={doc.docType} />
+                      </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-muted-foreground">
                         {!activeCollection && collection && <span>{collection.name}</span>}
                         {!activeCollection && collection && <span>·</span>}
                         <span>{formatBytes(doc.sizeBytes)}</span>
                         <span>·</span>
-                        <span>{timeAgo(doc.createdAt)}</span>
+                        <span>
+                          {timeAgo(doc.createdAt)}
+                          {doc.uploader &&
+                            ` by ${
+                              doc.uploader.id === me?.id
+                                ? "you"
+                                : doc.uploader.name ?? doc.uploader.email
+                            }`}
+                        </span>
                         {doc.status === "FAILED" && doc.errorMessage && (
                           <span className="text-danger">· {doc.errorMessage}</span>
                         )}
                       </div>
+                      <DocumentSummary summary={doc.summary} />
+                      <TopicChips
+                        topics={doc.topics ?? []}
+                        active={topicFilter}
+                        onSelect={toggleTopic}
+                      />
                     </div>
                     <StatusBadge status={doc.status} />
                     <Dropdown
@@ -319,7 +453,11 @@ function DocumentsView() {
         onClose={() => setColModalOpen(false)}
         workspaceId={workspaceId}
         editing={editingCol}
-        onSaved={() => void reloadCollections()}
+        onSaved={(col) => {
+          upsertCollection(col); // instant — Upload enables right away
+          if (!editingCol) setSelected(col.id); // auto-select a newly created one
+          void reloadCollections(); // reconcile counts in the background
+        }}
       />
       <ConfirmDialog
         open={!!toDelete}
@@ -341,6 +479,42 @@ function DocumentsView() {
         danger
         loading={colDeleting}
       />
+    </div>
+  );
+}
+
+/**
+ * Tally a repeated field across the loaded documents, most common first, so the
+ * filter bar only ever offers values that would actually match something.
+ */
+function countBy(
+  documents: Document[],
+  pick: (doc: Document) => string[],
+): Array<{ value: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const doc of documents) {
+    for (const value of pick(doc)) {
+      counts.set(value, (counts.get(value) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+}
+
+function FacetRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-2">
+      <span className="mt-1.5 w-11 shrink-0 text-xs text-muted-foreground">
+        {label}
+      </span>
+      <div className="flex flex-wrap gap-1.5">{children}</div>
     </div>
   );
 }

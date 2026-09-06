@@ -5,11 +5,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, use, useCallback, useEffect, useRef, useState } from "react";
 import { useChat } from "@/components/chat/chat-context";
 import { ChatComposer } from "@/components/chat/chat-composer";
-import { CitationModal } from "@/components/chat/citations";
+import { SourcesPanel } from "@/components/chat/citations";
 import { MessageBubble } from "@/components/chat/message-bubble";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
+import { attachmentHandoff, type PendingAttachment } from "@/lib/chat/attachments";
+import { useVoiceStore } from "@/lib/store/voice-store";
 import { useWorkspace } from "@/lib/store/workspace-context";
 import type { Citation, Conversation, Message } from "@/lib/types";
 
@@ -43,20 +45,24 @@ function ConversationView({
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [animateId, setAnimateId] = useState<string | null>(null);
-  const [activeCitation, setActiveCitation] = useState<Citation | null>(null);
+  const [sources, setSources] = useState<{ list: Citation[]; focusDocId?: string } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentQ = useRef(false);
+  /** Images from the last question, so a retry can resend the same bytes. */
+  const lastAttachments = useRef<PendingAttachment[]>([]);
+  /** The in-flight answer stream, so navigating away can abort it. */
+  const streamRef = useRef<AbortController | null>(null);
 
   const scrollToBottom = useCallback((smooth = true) => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: smooth ? "smooth" : "auto" });
   }, []);
 
-  // Sends `text` to the RAG endpoint. Renders an inline error bubble on failure
-  // (no user message is appended here — that's the caller's job).
+  // Sends `text` (plus any attached images) to the RAG endpoint. Renders an
+  // inline error bubble on failure (no user message is appended here — that's
+  // the caller's job).
   const runAsk = useCallback(
-    async (text: string) => {
+    async (text: string, attachments: PendingAttachment[] = []) => {
       setBusy(true);
       const pendingId = `pending_${Date.now()}`;
       const pending: Message = {
@@ -72,21 +78,63 @@ function ConversationView({
       setMessages((m) => [...m.filter((x) => !x.error), pending]);
       requestAnimationFrame(() => scrollToBottom());
 
+      // Aborted when the user leaves the conversation mid-answer.
+      const controller = new AbortController();
+      streamRef.current?.abort();
+      streamRef.current = controller;
+
       try {
-        const { message } = await api.chat.ask(workspaceId, conversationId, { content: text });
-        setMessages((m) => m.filter((x) => x.id !== pendingId).concat(message));
-        setAnimateId(message.id);
+        let streamed = "";
+        let settled = false;
+
+        for await (const event of api.chat.askStream(
+          workspaceId,
+          conversationId,
+          {
+            content: text,
+            images: attachments.length ? attachments.map((a) => a.image) : undefined,
+          },
+          controller.signal,
+        )) {
+          if (event.type === "delta") {
+            streamed += event.text;
+            // First token: swap the typing dots for the answer as it arrives.
+            setMessages((m) =>
+              m.map((x) =>
+                x.id === pendingId
+                  ? { ...x, pending: false, streaming: true, content: streamed }
+                  : x,
+              ),
+            );
+            scrollToBottom();
+          } else if (event.type === "done") {
+            settled = true;
+            // The real row — carries the persisted id and the citations, which
+            // only exist once the whole answer has been written.
+            setMessages((m) =>
+              m.map((x) => (x.id === pendingId ? event.message : x)),
+            );
+          } else {
+            throw new Error(event.message);
+          }
+        }
+
+        if (!settled) throw new Error("The answer ended unexpectedly.");
+
         // Refresh conversation meta (title may have been set on first turn).
         const conv = await api.chat.getConversation(workspaceId, conversationId);
         setConversation(conv);
         upsert(conv);
       } catch {
+        // Leaving the page aborts the stream — that is not a failure to report.
+        if (controller.signal.aborted) return;
         setMessages((m) =>
           m.map((x) =>
             x.id === pendingId ? { ...x, pending: false, error: true, content: "" } : x,
           ),
         );
       } finally {
+        if (streamRef.current === controller) streamRef.current = null;
         setBusy(false);
       }
     },
@@ -94,7 +142,8 @@ function ConversationView({
   );
 
   const send = useCallback(
-    (text: string) => {
+    (text: string, attachments: PendingAttachment[] = []) => {
+      useVoiceStore.getState().stop(); // interrupt any answer being read
       const tempUser: Message = {
         id: `tmp_${Date.now()}`,
         conversationId,
@@ -102,17 +151,26 @@ function ConversationView({
         content: text,
         citations: null,
         createdAt: new Date().toISOString(),
+        // Show what was sent. These previews belong to this page now, and are
+        // revoked on unmount (see the cleanup effect below).
+        attachments: attachments.length
+          ? attachments.map((a) => a.previewUrl)
+          : undefined,
       };
       setMessages((m) => [...m, tempUser]);
-      void runAsk(text);
+      // Keep the attachments for retry — the backend never stores them, so a
+      // retry has to resend the bytes.
+      lastAttachments.current = attachments;
+      void runAsk(text, attachments);
     },
     [conversationId, runAsk],
   );
 
-  // Retry the last question after an error (reuses the last user message).
+  // Retry the last question after an error (reuses the last user message and
+  // whatever images went with it).
   const retry = useCallback(() => {
     const lastUser = [...messages].reverse().find((m) => m.role === "USER");
-    if (lastUser) void runAsk(lastUser.content);
+    if (lastUser) void runAsk(lastUser.content, lastAttachments.current);
   }, [messages, runAsk]);
 
   // Load the conversation.
@@ -133,15 +191,37 @@ function ConversationView({
     };
   }, [workspaceId, conversationId, toast]);
 
-  // Auto-send the handoff question from the "new chat" screen (once).
+  // Leaving the conversation stops anything still talking and drops the
+  // in-flight stream. The backend finishes and saves the answer regardless, so
+  // it is waiting here on the way back.
+  useEffect(() => {
+    return () => {
+      useVoiceStore.getState().stop();
+      streamRef.current?.abort();
+      streamRef.current = null;
+    };
+  }, [conversationId]);
+
+  // Auto-send the handoff question from the "new chat" screen (once), together
+  // with any images that screen left in the hand-off slot.
   useEffect(() => {
     const q = search.get("q");
     if (!loading && q && !sentQ.current) {
       sentQ.current = true;
       router.replace(`/w/${workspaceId}/chat/${conversationId}`);
-      void send(q);
+      void send(q, attachmentHandoff.take());
     }
   }, [loading, search, send, router, workspaceId, conversationId]);
+
+  // Attachment previews are object URLs owned by this page — release them when
+  // the user leaves, or they leak for the lifetime of the tab.
+  useEffect(() => {
+    const held = lastAttachments;
+    return () => {
+      for (const a of held.current) URL.revokeObjectURL(a.previewUrl);
+      held.current = [];
+    };
+  }, [conversationId]);
 
   useEffect(() => {
     scrollToBottom(false);
@@ -184,9 +264,9 @@ function ConversationView({
               <MessageBubble
                 key={m.id}
                 message={m}
-                animate={m.id === animateId}
-                onCite={setActiveCitation}
-                onScroll={() => scrollToBottom(false)}
+                onOpenSources={(list, focus) =>
+                  setSources({ list, focusDocId: focus?.documentId })
+                }
                 onRetry={m.error ? retry : undefined}
               />
             ))
@@ -199,7 +279,11 @@ function ConversationView({
         <ChatComposer autoFocus busy={busy} onSend={send} />
       </div>
 
-      <CitationModal citation={activeCitation} onClose={() => setActiveCitation(null)} />
+      <SourcesPanel
+        citations={sources?.list ?? null}
+        focusDocId={sources?.focusDocId}
+        onClose={() => setSources(null)}
+      />
     </div>
   );
 }

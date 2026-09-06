@@ -14,6 +14,8 @@ interface WorkspaceContextValue {
   error: string | undefined;
   reloadCollections: () => Promise<void>;
   reloadWorkspace: () => Promise<void>;
+  /** Optimistically add/replace a collection so the UI updates instantly. */
+  upsertCollection: (col: Collection) => void;
 }
 
 const Ctx = createContext<WorkspaceContextValue | null>(null);
@@ -39,6 +41,14 @@ export function WorkspaceProvider({
     const cols = await api.collections.list(workspaceId);
     setCollections(cols);
   }, [workspaceId]);
+
+  const upsertCollection = useCallback((col: Collection) => {
+    setCollections((prev) =>
+      prev.some((c) => c.id === col.id)
+        ? prev.map((c) => (c.id === col.id ? col : c)) // rename: replace in place
+        : [col, ...prev], // create: prepend (list is newest-first)
+    );
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -68,6 +78,7 @@ export function WorkspaceProvider({
     error,
     reloadCollections,
     reloadWorkspace,
+    upsertCollection,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

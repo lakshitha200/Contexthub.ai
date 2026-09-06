@@ -86,7 +86,7 @@ export function UploadModal({
   }
 
   return (
-    <Modal open={open} onClose={close} title="Upload documents" description="PDF, Word, Markdown, HTML, CSV, JSON, text — or images. Charts, tables and scanned pages are read automatically." className="max-w-lg">
+    <Modal open={open} onClose={close} title="Upload documents" description="PDF, Word, Markdown, HTML, CSV, JSON, text and images. Charts, tables and scanned pages are read automatically." className="max-w-lg">
       <div className="mt-4 space-y-4">
         {collections.length > 1 ? (
           <div>
@@ -119,7 +119,7 @@ export function UploadModal({
           </p>
         ) : (
           <p className="rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[13px] text-muted-foreground">
-            Create a collection first — documents are always uploaded into one.
+            Create a collection first. Documents are always uploaded into one.
           </p>
         )}
 

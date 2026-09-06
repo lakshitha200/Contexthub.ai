@@ -71,11 +71,12 @@ export default function WorkspacesPage() {
                 key={ws.id}
                 initial={{ opacity: 0, y: 14 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3, delay: i * 0.05 }}
-                whileHover={{ y: -3 }}
+                transition={{ duration: 0.35, delay: i * 0.05, ease: [0.22, 1, 0.36, 1] }}
                 onClick={() => router.push(`/w/${ws.id}/chat`)}
-                className="group relative flex flex-col overflow-hidden rounded-xl border border-border bg-card p-5 text-left shadow-soft transition-shadow hover:shadow-pop"
+                className="hover-lift group relative flex flex-col overflow-hidden rounded-xl border border-border bg-card p-5 text-left shadow-soft"
               >
+                <span className="absolute inset-x-0 top-0 h-px bg-gradient-brand opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                <span className="sheen absolute inset-0" />
                 <div className="mb-4 flex items-start justify-between">
                   <div
                     className="grid h-11 w-11 place-items-center rounded-xl text-lg font-semibold text-white"
@@ -90,9 +91,9 @@ export default function WorkspacesPage() {
                   {ws.description ?? "No description"}
                 </p>
                 <div className="mt-4 flex items-center gap-4 text-xs text-muted-foreground">
-                  <span className="inline-flex items-center gap-1.5"><Users className="h-3.5 w-3.5" />{ws.memberCount ?? "—"}</span>
-                  <span className="inline-flex items-center gap-1.5"><FileText className="h-3.5 w-3.5" />{ws.documentCount ?? "—"}</span>
-                  <ArrowRight className="ml-auto h-4 w-4 -translate-x-1 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
+                  <span className="inline-flex items-center gap-1.5"><Users className="h-3.5 w-3.5" />{ws.memberCount ?? 0}</span>
+                  <span className="inline-flex items-center gap-1.5"><FileText className="h-3.5 w-3.5" />{ws.documentCount ?? 0}</span>
+                  <ArrowRight className="ml-auto h-4 w-4 -translate-x-1 text-primary opacity-0 transition-all duration-300 group-hover:translate-x-0 group-hover:opacity-100" />
                 </div>
               </motion.button>
             ))}

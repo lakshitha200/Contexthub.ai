@@ -43,7 +43,7 @@ export class DocumentController {
     @Param('collectionId') collectionId: string,
     @Query() query: ListDocumentsQueryDto,
   ) {
-    return this.documents.list(workspaceId, collectionId, query.status);
+    return this.documents.list(workspaceId, collectionId, query);
   }
 
   @Get(':documentId')

@@ -2,21 +2,34 @@
 import { tokenStore } from "../token-store";
 import type {
   AskResponse,
+  AskStreamEvent,
   AuthResponse,
   Collection,
   Conversation,
   ConversationWithMessages,
   Document,
   Message,
+  RegisterResult,
   User,
   Workspace,
   WorkspaceMember,
 } from "../types";
-import type { Role } from "../types";
+import type { Invite, Role } from "../types";
 import type { Api } from "./contract";
 import { http } from "./http";
 
 const enc = encodeURIComponent;
+
+/** Build a `?a=1&b=2` string from defined values, or "" when there are none. */
+function query(params?: object): string {
+  if (!params) return "";
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === "string" && value) search.set(key, value);
+  }
+  const encoded = search.toString();
+  return encoded ? `?${encoded}` : "";
+}
 
 // ------------------------------------------------------------------
 // Normalizers — the backend nests counts under `_count` and returns the
@@ -80,11 +93,9 @@ export const realApi: Api = {
       tokenStore.set(res.tokens);
       return res;
     },
-    async register(p) {
-      const res = await http.post<AuthResponse>("/auth/register", p, { anonymous: true });
-      tokenStore.set(res.tokens);
-      return res;
-    },
+    // Registration does NOT sign you in — it returns a "verify your email" result.
+    register: (p) =>
+      http.post<RegisterResult>("/auth/register", p, { anonymous: true }),
     me: () => http.get<User>("/auth/me"),
     updateProfile: (p) => http.patch<User>("/auth/me", p),
     async logout() {
@@ -95,11 +106,23 @@ export const realApi: Api = {
         tokenStore.clear();
       }
     },
-    requestMagicLink: (email, name) =>
-      http.post<void>("/auth/magic-link/request", { email, name }, { anonymous: true }),
-    async verifyMagicLink(token) {
-      const res = await http.get<AuthResponse>(
-        `/auth/magic-link/verify?token=${encodeURIComponent(token)}`,
+    async verifyEmail(token) {
+      const res = await http.post<AuthResponse>(
+        "/auth/verify-email",
+        { token },
+        { anonymous: true },
+      );
+      tokenStore.set(res.tokens);
+      return res;
+    },
+    resendVerification: (email) =>
+      http.post<void>("/auth/verify-email/resend", { email }, { anonymous: true }),
+    forgotPassword: (email) =>
+      http.post<void>("/auth/forgot-password", { email }, { anonymous: true }),
+    async resetPassword(token, newPassword) {
+      const res = await http.post<AuthResponse>(
+        "/auth/reset-password",
+        { token, newPassword },
         { anonymous: true },
       );
       tokenStore.set(res.tokens);
@@ -137,6 +160,16 @@ export const realApi: Api = {
       return raw.map((m) => mapMember(m, id));
     },
     invite: (id, p) => http.post<{ ok: true }>(`/workspaces/${enc(id)}/invite`, p),
+    async acceptInvite(token) {
+      // Backend returns the created membership; surface its workspaceId.
+      const member = await http.post<{ workspaceId: string }>("/workspaces/invites/accept", {
+        token,
+      });
+      return { workspaceId: member.workspaceId };
+    },
+    listInvites: (id) => http.get<Invite[]>(`/workspaces/${enc(id)}/invites`),
+    revokeInvite: (id, inviteId) =>
+      http.del<void>(`/workspaces/${enc(id)}/invites/${enc(inviteId)}`),
     removeMember: (id, userId) =>
       http.del<void>(`/workspaces/${enc(id)}/members/${enc(userId)}`),
     leave: (id) => http.post<void>(`/workspaces/${enc(id)}/leave`),
@@ -162,11 +195,9 @@ export const realApi: Api = {
 
   documents: {
     // All document routes are nested under the collection.
-    list: (ws, col, status) =>
+    list: (ws, col, filters) =>
       http.get<Document[]>(
-        `/workspaces/${enc(ws)}/collections/${enc(col)}/documents${
-          status ? `?status=${status}` : ""
-        }`,
+        `/workspaces/${enc(ws)}/collections/${enc(col)}/documents${query(filters)}`,
       ),
     get: (ws, col, id) =>
       http.get<Document>(
@@ -217,5 +248,17 @@ export const realApi: Api = {
       http.get<Message[]>(`/workspaces/${enc(ws)}/conversations/${enc(id)}/messages`),
     ask: (ws, id, p) =>
       http.post<AskResponse>(`/workspaces/${enc(ws)}/conversations/${enc(id)}/messages`, p),
+    askStream: (ws, id, p, signal) =>
+      http.postStream<AskStreamEvent>(
+        `/workspaces/${enc(ws)}/conversations/${enc(id)}/messages/stream`,
+        p,
+        signal,
+      ),
+    async chunkImageUrl(ws, chunkId) {
+      const blob = await http.getBlob(
+        `/workspaces/${enc(ws)}/chunks/${enc(chunkId)}/image`,
+      );
+      return URL.createObjectURL(blob);
+    },
   },
 };

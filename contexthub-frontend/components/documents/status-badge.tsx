@@ -8,13 +8,21 @@ const LABELS: Record<DocStatus, string> = {
   UPLOADED: "Queued",
   PARSING: "Parsing",
   CHUNKING: "Chunking",
+  ANALYZING: "Analyzing",
   EMBEDDING: "Embedding",
   READY: "Ready",
   FAILED: "Failed",
 };
 
 /** Ordered pipeline (excludes terminal FAILED). Used for the progress hint. */
-const STEP: DocStatus[] = ["UPLOADED", "PARSING", "CHUNKING", "EMBEDDING", "READY"];
+const STEP: DocStatus[] = [
+  "UPLOADED",
+  "PARSING",
+  "CHUNKING",
+  "ANALYZING",
+  "EMBEDDING",
+  "READY",
+];
 
 export function StatusBadge({ status }: { status: DocStatus }) {
   if (status === "READY") {

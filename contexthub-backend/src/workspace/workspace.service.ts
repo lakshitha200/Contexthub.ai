@@ -27,14 +27,25 @@ export class WorkspaceService {
   ) {}
 
   async create(userId: string, dto: CreateWorkspaceDto) {
-    const base = this.slugify(dto.name);
+    const name = dto.name.trim();
+
+    // A user can't have two workspaces with the same name (case-insensitive).
+    const existing = await this.prisma.workspaceMember.findFirst({
+      where: { userId, workspace: { name: { equals: name, mode: 'insensitive' } } },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new ConflictException(`You already have a workspace named "${name}".`);
+    }
+
+    const base = this.slugify(name);
 
     for (let attempt = 0; attempt < 5; attempt++) {
       const slug = attempt === 0 ? base : `${base}-${randomBytes(3).toString('hex')}`;
       try {
         return await this.prisma.workspace.create({
           data: {
-            name: dto.name,
+            name,
             slug,
             description: dto.description ?? null,
             members: {
@@ -154,6 +165,39 @@ export class WorkspaceService {
     });
 
     await this.mail.sendWorkspaceInvite(email, workspace.name, rawToken);
+    return { success: true };
+  }
+
+  /** Pending invites for a workspace (not yet accepted, revoked, or expired). */
+  async listInvites(workspaceId: string) {
+    return this.prisma.invite.findMany({
+      where: {
+        workspaceId,
+        acceptedAt: null,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        createdAt: true,
+        expiresAt: true,
+      },
+    });
+  }
+
+  /** Cancel a pending invite. */
+  async revokeInvite(workspaceId: string, inviteId: string) {
+    const invite = await this.prisma.invite.findUnique({ where: { id: inviteId } });
+    if (!invite || invite.workspaceId !== workspaceId) {
+      throw new NotFoundException('Invite not found in this workspace');
+    }
+    await this.prisma.invite.update({
+      where: { id: inviteId },
+      data: { revokedAt: new Date() },
+    });
     return { success: true };
   }
 

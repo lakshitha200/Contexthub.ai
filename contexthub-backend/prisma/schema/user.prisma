@@ -1,12 +1,18 @@
+enum AuthProvider {
+  EMAIL
+  GOOGLE
+}
+
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
+  id            String       @id @default(cuid())
+  email         String       @unique
   passwordHash  String?
   name          String?
   avatarUrl     String?
   emailVerified DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  authProvider  AuthProvider @default(EMAIL)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
   memberships        WorkspaceMember[]
   conversations      Conversation[]

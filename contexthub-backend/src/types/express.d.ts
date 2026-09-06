@@ -3,6 +3,8 @@ import type { ActiveMembership } from '../workspace/decorators/current-membershi
 declare module 'express-serve-static-core' {
   interface Request {
     membership?: ActiveMembership;
+    /** Correlation id set by LoggingInterceptor (or AllExceptionsFilter as fallback). */
+    requestId?: string;
   }
 }
 

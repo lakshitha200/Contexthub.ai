@@ -5,13 +5,15 @@ import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
 import { ConversationService } from './conversation.service';
 import { LlmService } from './llm.service';
+import { QueryRewriterService } from './query-rewriter.service';
 import { RetrievalService } from './retrieval.service';
 
 /**
- * Module 6 — Chat / RAG. Consumes the chunks Module 5 produced: embed a
- * question, retrieve the closest chunks (pgvector), ask the LLM, and persist a
- * cited answer. Depends on the global EmbeddingModule + PrismaModule, and on
- * CollectionModule for collection-scope validation.
+ * Module 6 — Chat / RAG. Consumes the chunks Module 5 produced: rewrite a
+ * follow-up into a standalone query, embed it, retrieve the closest chunks
+ * (pgvector), ask the LLM, and persist a cited answer. Depends on the global
+ * EmbeddingModule + PrismaModule, and on CollectionModule for collection-scope
+ * validation.
  */
 @Module({
   imports: [CollectionModule],
@@ -20,6 +22,7 @@ import { RetrievalService } from './retrieval.service';
     ConversationService,
     RetrievalService,
     LlmService,
+    QueryRewriterService,
     ChatService,
     WorkspaceGuard,
   ],

@@ -169,6 +169,24 @@
   50% { opacity: 0; }
 }
 
+/* Halo that expands out of the mic button while it is listening. Scales the
+   ring outward and fades it, so the button reads as "open" rather than
+   "recording" — a pulsing red fill implies capture, which this isn't. */
+@keyframes voice-halo {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  70% {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+}
+
 .text-gradient {
   background: var(--gradient-brand);
   -webkit-background-clip: text;

@@ -2,31 +2,65 @@ enum DocStatus {
   UPLOADED
   PARSING
   CHUNKING
+  /// Reading the document as a whole to write its summary, type and topics.
+  ANALYZING
   EMBEDDING
   READY
   FAILED
+}
+
+/// Closed set of document classifications. Closed on purpose: an open-ended
+/// "what type is this?" produces a different label every time and can never be
+/// filtered on. OTHER is the escape hatch.
+enum DocType {
+  REPORT
+  CONTRACT
+  PROPOSAL
+  PLAN
+  POLICY
+  MEETING_NOTES
+  SPECIFICATION
+  MANUAL
+  PRESENTATION
+  INVOICE
+  RESEARCH
+  CORRESPONDENCE
+  OTHER
 }
 
 model Document {
   id           String    @id @default(cuid())
   workspaceId  String
   collectionId String
-  uploaderId   String
+  uploaderId   String?
   filename     String
   mimeType     String
   sizeBytes    Int
   storageKey   String
   status       DocStatus @default(UPLOADED)
   errorMessage String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+
+  /// A short abstract written at ingest time by reading the document. Shown in
+  /// the UI, and prepended to every chunk before embedding so an isolated
+  /// passage still carries its document's context (contextual retrieval).
+  summary  String?
+  /// What kind of document this is. Null when analysis was skipped or failed.
+  docType  DocType?
+  /// Lowercase topic keywords for filtering. Empty when analysis was skipped.
+  topics   String[]  @default([])
+  /// When the summary/type/topics were last generated.
+  analyzedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   workspace  Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
-  uploader   User       @relation("UploadedDocuments", fields: [uploaderId], references: [id])
+  uploader   User?      @relation("UploadedDocuments", fields: [uploaderId], references: [id], onDelete: SetNull)
   chunks     Chunk[]
 
   @@index([workspaceId])
   @@index([collectionId])
   @@index([status])
+  @@index([workspaceId, docType])
 }

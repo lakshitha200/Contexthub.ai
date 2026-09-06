@@ -28,10 +28,28 @@ export function UploadModal({
   const { workspaceId } = useWorkspace();
   const toast = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
-  const [collectionId, setCollectionId] = useState(defaultCollectionId ?? collections[0]?.id ?? "");
   const [files, setFiles] = useState<File[]>([]);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+
+  // Only the user's explicit pick is stored. The effective collection is
+  // DERIVED below — this modal stays mounted for the life of the page, so a
+  // value initialised from `collections` would be captured while the list was
+  // still empty (a brand-new workspace) and never recover, leaving Upload
+  // permanently disabled. Deriving also self-heals if the chosen collection is
+  // renamed away or deleted underneath us.
+  const [chosen, setChosen] = useState<string | null>(null);
+
+  const isKnown = (id: string | null | undefined): id is string =>
+    !!id && collections.some((c) => c.id === id);
+
+  const collectionId = isKnown(chosen)
+    ? chosen
+    : isKnown(defaultCollectionId)
+      ? defaultCollectionId
+      : (collections[0]?.id ?? "");
+
+  const activeCollection = collections.find((c) => c.id === collectionId);
 
   function addFiles(list: FileList | null) {
     if (!list) return;
@@ -55,20 +73,29 @@ export function UploadModal({
     setUploading(false);
     if (ok) toast("success", `${ok} file${ok > 1 ? "s" : ""} uploaded`, "Processing started.");
     setFiles([]);
+    setChosen(null); // next open follows the page's selected collection again
+    onClose();
+  }
+
+  // The modal is never unmounted, so anything left over from a cancelled
+  // attempt would still be sitting here next time it opens.
+  function close() {
+    setFiles([]);
+    setChosen(null);
     onClose();
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Upload documents" description="PDF, Word, Markdown, HTML, CSV, JSON or text. They'll be parsed and embedded automatically." className="max-w-lg">
+    <Modal open={open} onClose={close} title="Upload documents" description="PDF, Word, Markdown, HTML, CSV, JSON, text — or images. Charts, tables and scanned pages are read automatically." className="max-w-lg">
       <div className="mt-4 space-y-4">
-        {collections.length > 1 && (
+        {collections.length > 1 ? (
           <div>
             <p className="mb-1.5 text-[13px] font-medium">Collection</p>
             <div className="flex flex-wrap gap-1.5">
               {collections.map((c) => (
                 <button
                   key={c.id}
-                  onClick={() => setCollectionId(c.id)}
+                  onClick={() => setChosen(c.id)}
                   className={cn(
                     "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors",
                     collectionId === c.id ? "border-primary/50 bg-accent text-accent-foreground" : "border-border hover:bg-secondary",
@@ -80,6 +107,20 @@ export function UploadModal({
               ))}
             </div>
           </div>
+        ) : activeCollection ? (
+          // With a single collection there is nothing to choose, but showing the
+          // destination makes it obvious where the files are going.
+          <p className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+            Uploading to
+            <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+              <span className="h-2 w-2 rounded-full" style={{ background: colorFromString(activeCollection.name) }} />
+              {activeCollection.name}
+            </span>
+          </p>
+        ) : (
+          <p className="rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[13px] text-muted-foreground">
+            Create a collection first — documents are always uploaded into one.
+          </p>
         )}
 
         <div
@@ -108,7 +149,7 @@ export function UploadModal({
             multiple
             hidden
             onChange={(e) => addFiles(e.target.files)}
-            accept=".pdf,.doc,.docx,.md,.markdown,.txt,.html,.csv,.json"
+            accept=".pdf,.doc,.docx,.md,.markdown,.txt,.html,.csv,.json,.png,.jpg,.jpeg,.webp,.gif"
           />
         </div>
 
@@ -132,7 +173,7 @@ export function UploadModal({
         </AnimatePresence>
 
         <div className="flex justify-end gap-2 pt-1">
-          <Button variant="ghost" onClick={onClose} disabled={uploading}>Cancel</Button>
+          <Button variant="ghost" onClick={close} disabled={uploading}>Cancel</Button>
           <Button onClick={submit} disabled={!collectionId || files.length === 0 || uploading}>
             {uploading && <Loader2 className="h-4 w-4 animate-spin" />}
             Upload {files.length > 0 ? `(${files.length})` : ""}

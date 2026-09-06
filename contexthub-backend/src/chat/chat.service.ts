@@ -1,12 +1,51 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { MessageRole, Prisma } from '../../generated/prisma/client';
+import {
+  ChunkKind,
+  MessageRole,
+  Prisma,
+  type Conversation,
+  type Message,
+} from '../../generated/prisma/client';
 import { CollectionService } from '../collection/collection.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConversationService } from './conversation.service';
 import { AskDto } from './dto/ask.dto';
-import { LlmService, type LlmTurn } from './llm.service';
+import { LlmService, type LlmImage, type LlmTurn } from './llm.service';
+import { QueryRewriterService } from './query-rewriter.service';
 import { RetrievalService, type RetrievedChunk } from './retrieval.service';
+
+/** What `ask` returns, and what a stream's final `done` event carries. */
+export interface AskResult {
+  message: Message;
+  citations: Citation[];
+}
+
+/**
+ * One frame of a streamed answer.
+ *
+ * `delta` carries raw text as the model writes it. `done` arrives once, after
+ * the answer is persisted, and is the authoritative version — it carries the
+ * real message id and the citations, neither of which exist until generation
+ * has finished.
+ */
+export type AskStreamEvent =
+  | { type: 'delta'; text: string }
+  | ({ type: 'done' } & AskResult);
+
+/** Everything `prepare()` works out before the model is called. */
+interface PreparedTurn {
+  conversation: Conversation;
+  priorMessages: Array<{ role: MessageRole; content: string }>;
+  question: string;
+  chunks: RetrievedChunk[];
+  turns: LlmTurn[];
+}
 
 /** A source reference attached to an assistant answer. */
 export interface Citation {
@@ -15,17 +54,27 @@ export interface Citation {
   documentId: string;
   filename: string;
   pageNumber: number | null;
+  /** TEXT | TABLE | IMAGE | OCR — what the passage was extracted from. */
+  kind: ChunkKind;
+  /** Storage key of the source chart/image, for IMAGE citations only. */
+  imageKey: string | null;
   score: number;
   snippet: string;
 }
 
-const SYSTEM_INSTRUCTION = `You are ContextHub, a helpful assistant that answers questions strictly from the provided context.
+const SYSTEM_INSTRUCTION = `You are ContextHub, a helpful AI assistant for a team's knowledge workspace.
 
-Rules:
-- Answer ONLY using the numbered context passages given in the user's message.
-- When you use a passage, cite it inline with its number in square brackets, e.g. [1] or [2][3].
-- If the context does not contain the answer, say you don't have enough information in the provided documents. Do not invent facts.
-- Be concise and direct.`;
+You are given numbered context passages retrieved from the user's documents (there may be none, or they may be irrelevant to the question). Passages are labelled with what they came from: document text, a table, a transcribed scanned page, or a description of a chart or image.
+
+The user may also attach one or more images directly to their question (for example a screenshot). Those images are NOT from the knowledge base — they are part of the question itself.
+
+How to answer:
+- If the passages are relevant, answer using ONLY them and cite each fact inline with its number in square brackets, e.g. [1] or [2][3].
+- If the user attached an image, read it carefully and use it to answer. Do not cite an attached image with [n] — citation numbers refer only to the retrieved passages. When the question asks you to compare an attached image against the documents, describe what the image shows and cite the document side with [n].
+- If the question is a greeting, small talk, or a general-knowledge / how-to-use-this-assistant question that the passages don't cover, just answer briefly and helpfully from your own knowledge. In that case do NOT add any [n] citation markers, and don't claim the answer came from the user's documents.
+- If the question clearly asks about the user's documents but the passages don't contain the answer, say you couldn't find it in the documents and suggest uploading or rephrasing. Never invent facts about the user's documents.
+- A passage describing a chart was written by reading the image, so it may describe a trend without exact figures. Report only the numbers the passage actually states — never estimate a value it does not give.
+- Be concise, direct, and friendly.`;
 
 // How many past turns of the conversation to send back to the model.
 const MAX_HISTORY_MESSAGES = 10;
@@ -35,8 +84,13 @@ const SNIPPET_LEN = 300;
 /**
  * The RAG orchestration: question in → grounded, cited answer out.
  *
- *   persist USER msg → embed+retrieve chunks → build prompt → call LLM
- *   → persist ASSISTANT msg (+citations)
+ *   persist USER msg → rewrite query → embed+retrieve chunks → build prompt
+ *   → call LLM → persist ASSISTANT msg (+citations)
+ *
+ * The rewrite step exists because retrieval sees one string while the model
+ * sees the whole conversation: "what about costs?" has to become "what did the
+ * Q3 report say about costs?" before it is embedded, or the search has nothing
+ * to go on. Only the search sees it — the stored question stays as typed.
  *
  * Retrieval is scoped by the conversation's workspace and (optional) collection,
  * so an answer can only ever draw on documents the user already has access to.
@@ -47,6 +101,7 @@ export class ChatService {
 
   constructor(
     private readonly conversations: ConversationService,
+    private readonly rewriter: QueryRewriterService,
     private readonly retrieval: RetrievalService,
     private readonly llm: LlmService,
     private readonly collections: CollectionService,
@@ -54,12 +109,82 @@ export class ChatService {
     private readonly config: ConfigService,
   ) {}
 
+  /** Ask and wait for the whole answer. */
   async ask(
     workspaceId: string,
     userId: string,
     conversationId: string,
     dto: AskDto,
-  ) {
+  ): Promise<AskResult> {
+    const turn = await this.prepare(workspaceId, userId, conversationId, dto);
+
+    // Hybrid: always let the LLM answer. It grounds + cites when the passages
+    // are relevant, and answers greetings / general questions conversationally
+    // otherwise. We then attach ONLY the sources the answer actually cited, so
+    // small talk shows no citations and document answers stay grounded.
+    const answer = await this.llm.generate(turn.turns, SYSTEM_INSTRUCTION);
+
+    return this.finalize(workspaceId, userId, conversationId, turn, answer);
+  }
+
+  /**
+   * Ask and emit the answer as it is written.
+   *
+   * Identical to `ask` up to generation — same rewrite, same retrieval, same
+   * prompt — and identical after it: the answer is persisted with the same
+   * citation filtering. The only difference is that the caller sees the text
+   * arrive instead of waiting for it.
+   *
+   * The generator always runs to completion once generation starts, even if the
+   * client has disconnected, so a paid-for answer is never lost: the user finds
+   * it waiting when they reload.
+   */
+  async *askStream(
+    workspaceId: string,
+    userId: string,
+    conversationId: string,
+    dto: AskDto,
+  ): AsyncGenerator<AskStreamEvent> {
+    const turn = await this.prepare(workspaceId, userId, conversationId, dto);
+
+    let answer = '';
+    for await (const delta of this.llm.generateStream(
+      turn.turns,
+      SYSTEM_INSTRUCTION,
+    )) {
+      answer += delta;
+      yield { type: 'delta', text: delta };
+    }
+
+    // Trim once, at the end — trimming each delta would eat the spaces between.
+    const complete = answer.trim();
+    if (!complete) {
+      throw new InternalServerErrorException(
+        'LLM provider error: model returned an empty response',
+      );
+    }
+
+    const result = await this.finalize(
+      workspaceId,
+      userId,
+      conversationId,
+      turn,
+      complete,
+    );
+    yield { type: 'done', ...result };
+  }
+
+  /**
+   * Everything before generation: ownership, history, the persisted question,
+   * scope, the rewritten search query, retrieval, and the assembled prompt.
+   * Shared verbatim by both `ask` and `askStream`.
+   */
+  private async prepare(
+    workspaceId: string,
+    userId: string,
+    conversationId: string,
+    dto: AskDto,
+  ): Promise<PreparedTurn> {
     const conversation = await this.conversations.getOwnedOrThrow(
       workspaceId,
       userId,
@@ -74,10 +199,15 @@ export class ChatService {
     );
 
     const question = dto.content.trim();
+    // Attached images are used for THIS turn only — they are not embedded and
+    // not persisted, so a follow-up question must re-attach them.
+    const images = dto.images ?? [];
     await this.conversations.addMessage(
       conversationId,
       MessageRole.USER,
-      question,
+      images.length
+        ? `${question}\n\n[${images.length} image(s) attached]`
+        : question,
     );
 
     // Resolve the search scope. Precedence: per-question filter (dto) overrides
@@ -87,26 +217,39 @@ export class ChatService {
     const documentId = dto.documentId ?? null;
     await this.validateScope(workspaceId, collectionId, documentId);
 
+    // Resolve follow-ups against the conversation before searching. Returns the
+    // question untouched on the first turn, when disabled, or on failure.
+    const searchQuery = await this.rewriter.rewrite(question, priorMessages);
+
     // Retrieve relevant chunks within the resolved scope.
     const chunks = await this.retrieval.retrieve(
       workspaceId,
       { collectionId, documentId },
-      question,
+      searchQuery,
       this.topKValue(),
     );
 
-    let answer: string;
-    let citations: Citation[] = [];
+    return {
+      conversation,
+      priorMessages,
+      question,
+      chunks,
+      turns: this.buildTurns(priorMessages, question, chunks, images),
+    };
+  }
 
-    if (chunks.length === 0) {
-      // Nothing to ground on — answer honestly without calling the LLM.
-      answer =
-        "I don't have any indexed documents to answer that from yet. Upload and process documents, then ask again.";
-    } else {
-      citations = this.toCitations(chunks);
-      const turns = this.buildTurns(priorMessages, question, chunks);
-      answer = await this.llm.generate(turns, SYSTEM_INSTRUCTION);
-    }
+  /** Everything after generation: citations, persistence, auto-title. */
+  private async finalize(
+    workspaceId: string,
+    userId: string,
+    conversationId: string,
+    turn: PreparedTurn,
+    answer: string,
+  ): Promise<AskResult> {
+    const cited = extractCitedIndices(answer);
+    const citations: Citation[] = turn.chunks.length
+      ? this.toCitations(turn.chunks).filter((c) => cited.has(c.index))
+      : [];
 
     const assistant = await this.conversations.addMessage(
       conversationId,
@@ -117,14 +260,17 @@ export class ChatService {
     );
 
     // Auto-title a brand-new conversation from its first question.
-    if (priorMessages.length === 0 && conversation.title === 'New conversation') {
+    if (
+      turn.priorMessages.length === 0 &&
+      turn.conversation.title === 'New conversation'
+    ) {
       await this.conversations.update(workspaceId, userId, conversationId, {
-        title: question.slice(0, 80),
+        title: turn.question.slice(0, 80),
       });
     }
 
     this.logger.log(
-      `Answered conversation ${conversationId}: ${chunks.length} chunks retrieved`,
+      `Answered conversation ${conversationId}: ${turn.chunks.length} chunks retrieved`,
     );
 
     return { message: assistant, citations };
@@ -135,6 +281,7 @@ export class ChatService {
     priorMessages: Array<{ role: MessageRole; content: string }>,
     question: string,
     chunks: RetrievedChunk[],
+    images: LlmImage[],
   ): LlmTurn[] {
     const history: LlmTurn[] = priorMessages
       .slice(-MAX_HISTORY_MESSAGES)
@@ -143,18 +290,20 @@ export class ChatService {
         text: m.content,
       }));
 
-    const context = chunks
-      .map(
-        (c, i) =>
-          `[${i + 1}] (source: ${c.filename}${
-            c.pageNumber ? `, p.${c.pageNumber}` : ''
-          })\n${c.content}`,
-      )
-      .join('\n\n');
+    const context = chunks.length
+      ? chunks
+          .map((c, i) => `[${i + 1}] (${describeSource(c)})\n${c.content}`)
+          .join('\n\n')
+      : '(No relevant document passages were found for this question.)';
+
+    const attached = images.length
+      ? `\n\nThe user attached ${images.length} image(s) to this question. They are shown above and are not part of the knowledge base.`
+      : '';
 
     const finalTurn: LlmTurn = {
       role: 'user',
-      text: `Context passages:\n\n${context}\n\n---\nQuestion: ${question}`,
+      text: `Context passages:\n\n${context}${attached}\n\n---\nQuestion: ${question}`,
+      images: images.length ? images : undefined,
     };
 
     return [...history, finalTurn];
@@ -167,6 +316,8 @@ export class ChatService {
       documentId: c.documentId,
       filename: c.filename,
       pageNumber: c.pageNumber,
+      kind: c.kind,
+      imageKey: c.imageKey,
       score: Number(c.score.toFixed(4)),
       snippet:
         c.content.length > SNIPPET_LEN
@@ -207,4 +358,37 @@ export class ChatService {
   private topKValue(): number {
     return Number(this.config.get<string>('RAG_TOP_K', '5'));
   }
+}
+
+/**
+ * Label a passage so the model knows how much to trust it. A table is verbatim
+ * from the document; a chart description was written by a vision model reading
+ * an image, which is a weaker source and worth flagging as such.
+ */
+function describeSource(chunk: RetrievedChunk): string {
+  const where = `source: ${chunk.filename}${
+    chunk.pageNumber ? `, p.${chunk.pageNumber}` : ''
+  }`;
+
+  switch (chunk.kind) {
+    case ChunkKind.TABLE:
+      return `${where} — table`;
+    case ChunkKind.IMAGE:
+      return `${where} — description of a chart or image`;
+    case ChunkKind.OCR:
+      return `${where} — text read from a scanned page`;
+    default:
+      return where;
+  }
+}
+
+/** Which [n] citation markers the model actually used in its answer. */
+function extractCitedIndices(answer: string): Set<number> {
+  const cited = new Set<number>();
+  const re = /\[(\d+)\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(answer)) !== null) {
+    cited.add(Number(match[1]));
+  }
+  return cited;
 }

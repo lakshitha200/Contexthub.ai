@@ -3,6 +3,7 @@ import {
   ArrayMaxSize,
   IsArray,
   IsBase64,
+  IsBoolean,
   IsIn,
   IsOptional,
   IsString,
@@ -65,4 +66,16 @@ export class AskDto {
   @ValidateNested({ each: true })
   @Type(() => AskImageDto)
   images?: AskImageDto[];
+
+  /**
+   * Run the question through the research agent, which searches several times
+   * and reads what comes back before answering, instead of retrieving once.
+   *
+   * Rationed separately from tokens because one run fans out into several model
+   * calls. Refused with AGENT_LIMIT_REACHED when the day's runs are used up;
+   * the ordinary path still works, so it is never a dead end.
+   */
+  @IsOptional()
+  @IsBoolean()
+  deepSearch?: boolean;
 }

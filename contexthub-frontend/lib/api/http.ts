@@ -28,6 +28,12 @@ export class ApiError extends Error {
   get isQuotaExceeded(): boolean {
     return this.code === "QUOTA_EXCEEDED";
   }
+
+  /** Deep search runs are used up. Ordinary questions still work, so this is a
+   *  different message from running out of tokens, not the same one. */
+  get isAgentLimitReached(): boolean {
+    return this.code === "AGENT_LIMIT_REACHED";
+  }
 }
 
 /** Body the backend returns for a spent allowance, under `details`. */

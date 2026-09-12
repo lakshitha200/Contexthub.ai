@@ -244,6 +244,8 @@ export interface AskResponse {
  */
 export type AskStreamEvent =
   | { type: "delta"; text: string }
+  /** Deep search progress, so several seconds of searching are not silent. */
+  | { type: "status"; stage: "searching" | "found" | "thinking"; detail?: string }
   | ({ type: "done" } & AskResponse)
   | {
       type: "error";
@@ -296,6 +298,12 @@ export interface AskPayload {
    * file as a document if it should become searchable.
    */
   images?: AskImage[];
+  /**
+   * Let the research agent search several times and read what comes back before
+   * answering, instead of retrieving once. Rationed per day separately from the
+   * token allowance, because one run is several model calls.
+   */
+  deepSearch?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -314,6 +322,14 @@ export interface UsageSummary {
   percentUsed: number;
   /** Provider calls made in this window. */
   calls: number;
+  /** Deep search runs started in this window. */
+  agentRunsUsed: number;
+  /** Deep search runs allowed per window. */
+  agentRunsLimit: number;
+  /** Zero means the toggle should be disabled. */
+  agentRunsRemaining: number;
+  /** False when deep search is off server-side; hide the toggle entirely. */
+  agentEnabled: boolean;
   /** ISO timestamp when the allowance resets. */
   resetsAt: string;
   /** False once the allowance is spent. */

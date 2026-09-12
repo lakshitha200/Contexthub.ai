@@ -16,6 +16,7 @@ import { CollectionService } from '../collection/collection.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuotaService } from '../quota/quota.service';
 import { ConversationService } from './conversation.service';
+import { AgentService, type AgentProgress } from './agent.service';
 import { AskDto } from './dto/ask.dto';
 import { LlmService, type LlmImage, type LlmTurn } from './llm.service';
 import { QueryRewriterService } from './query-rewriter.service';
@@ -37,6 +38,10 @@ export interface AskResult {
  */
 export type AskStreamEvent =
   | { type: 'delta'; text: string }
+  // Deep search takes several seconds before a single word is written, so it
+  // reports what it is doing. Without this the user watches a spinner and
+  // assumes it has hung.
+  | { type: 'status'; stage: AgentProgress['type']; detail?: string }
   | ({ type: 'done' } & AskResult);
 
 /** Everything `prepare()` works out before the model is called. */
@@ -46,6 +51,50 @@ interface PreparedTurn {
   question: string;
   chunks: RetrievedChunk[];
   turns: LlmTurn[];
+}
+
+/** Nothing to report: the non-streaming path has nowhere to put progress. */
+const IGNORE_PROGRESS = () => {};
+
+/**
+ * A queue that can be pushed to from a callback and read as an async iterable.
+ *
+ * The agent reports progress by calling back while it works, but a generator
+ * can only yield from its own body, so those reports have nowhere to go. Simply
+ * collecting them in an array and emitting afterwards would compile and be
+ * useless: the whole point is telling the user what is happening *during* the
+ * several seconds of searching, not listing it once the wait is over.
+ *
+ * So pushes land here and the generator drains them as they arrive, parking on
+ * a promise whenever the queue runs dry.
+ */
+function createEventPump<T>() {
+  const queue: T[] = [];
+  let wake: (() => void) | null = null;
+  let closed = false;
+
+  return {
+    push(item: T) {
+      queue.push(item);
+      wake?.();
+    },
+    close() {
+      closed = true;
+      wake?.();
+    },
+    async *drain(): AsyncGenerator<T> {
+      for (;;) {
+        while (queue.length) yield queue.shift() as T;
+        if (closed) return;
+        await new Promise<void>((resolve) => {
+          wake = () => {
+            wake = null;
+            resolve();
+          };
+        });
+      }
+    },
+  };
 }
 
 /** A source reference attached to an assistant answer. */
@@ -126,6 +175,7 @@ export class ChatService {
     private readonly conversations: ConversationService,
     private readonly rewriter: QueryRewriterService,
     private readonly retrieval: RetrievalService,
+    private readonly agent: AgentService,
     private readonly llm: LlmService,
     private readonly quota: QuotaService,
     private readonly collections: CollectionService,
@@ -249,6 +299,7 @@ export class ChatService {
     conversationId: string,
     dto: AskDto,
     tally: ReturnType<typeof createUsageTally>,
+    onProgress: (progress: AgentProgress) => void = IGNORE_PROGRESS,
   ): Promise<PreparedTurn> {
     const conversation = await this.conversations.getOwnedOrThrow(
       workspaceId,
@@ -262,6 +313,16 @@ export class ChatService {
     // Checked here, before the question is persisted, so a refused turn leaves
     // no orphan user message sitting in the thread with no answer under it.
     await this.quota.assertWithinQuota(userId);
+
+    // Deep search is rationed by run, so it is checked and counted before any
+    // work starts. Counted on start rather than on success: a run that fails
+    // halfway has still spent most of its model calls, and refunding it would
+    // let a failing request be looped for unlimited searching.
+    const deepSearch = dto.deepSearch === true;
+    if (deepSearch) {
+      await this.quota.assertAgentRunAvailable(userId);
+      await this.quota.recordAgentRun(userId);
+    }
 
     // History BEFORE this turn (so the new question isn't duplicated below).
     const priorMessages = await this.conversations.listMessages(
@@ -289,21 +350,29 @@ export class ChatService {
     const documentId = dto.documentId ?? null;
     await this.validateScope(workspaceId, collectionId, documentId);
 
-    // Resolve follow-ups against the conversation before searching. Returns the
-    // question untouched on the first turn, when disabled, or on failure.
-    const searchQuery = await this.rewriter.rewrite(
-      question,
-      priorMessages,
-      tally.add,
-    );
-
-    // Retrieve relevant chunks within the resolved scope.
-    const chunks = await this.retrieval.retrieve(
-      workspaceId,
-      { collectionId, documentId },
-      searchQuery,
-      this.topKValue(),
-    );
+    // Gather the evidence. Deep search runs its own searches and decides when
+    // it has enough; the ordinary path embeds the question once and keeps the
+    // top few. Either way what comes out is a list of chunks, so everything
+    // downstream (prompt, citations, persistence) is identical.
+    const chunks = deepSearch
+      ? (
+          await this.agent.gather(
+            workspaceId,
+            question,
+            { collectionId, documentId },
+            tally.add,
+            onProgress,
+          )
+        ).chunks
+      : await this.retrieval.retrieve(
+          workspaceId,
+          { collectionId, documentId },
+          // Resolve follow-ups before searching. Returns the question untouched
+          // on the first turn, when disabled, or on failure. The agent does its
+          // own reformulation, so this is only for the one-shot path.
+          await this.rewriter.rewrite(question, priorMessages, tally.add),
+          this.topKValue(),
+        );
 
     return {
       conversation,

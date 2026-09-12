@@ -20,6 +20,11 @@ model UsageCounter {
   /// own kind of abuse that a token count alone would hide.
   calls Int @default(0)
 
+  /// Deep search runs started today. Counted separately from tokens because it
+  /// is rationed by its own rule: a run fans out into several model calls, so
+  /// it is limited by how many times it may be started, not by what it spends.
+  agentRuns Int @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

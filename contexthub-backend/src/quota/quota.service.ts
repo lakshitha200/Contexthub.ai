@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { AgentLimitException } from './agent-limit.exception';
 import { QuotaExceededException } from './quota-exceeded.exception';
 
 /** A read of one account's standing for the current window. */
@@ -15,6 +16,14 @@ export interface QuotaSummary {
   percentUsed: number;
   /** Provider calls made in the current window. */
   calls: number;
+  /** Deep search runs started in the current window. */
+  agentRunsUsed: number;
+  /** Deep search runs allowed per window. */
+  agentRunsLimit: number;
+  /** Never negative. Zero means the toggle should be disabled. */
+  agentRunsRemaining: number;
+  /** False when deep search is switched off server-side; hide the toggle. */
+  agentEnabled: boolean;
   /** When the allowance resets. */
   resetsAt: string;
   /** False once the allowance is spent. */
@@ -61,6 +70,8 @@ export class QuotaService {
   private readonly logger = new Logger(QuotaService.name);
   private readonly dailyTokens: number;
   private readonly enabled: boolean;
+  private readonly agentDailyRuns: number;
+  private readonly agentEnabled: boolean;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -70,6 +81,15 @@ export class QuotaService {
       this.config.get<string>('QUOTA_DAILY_TOKENS', '60000'),
     );
     this.enabled = this.config.get<string>('QUOTA_ENABLED', 'true') !== 'false';
+    this.agentDailyRuns = Number(
+      this.config.get<string>('AGENT_DAILY_RUNS', '1'),
+    );
+    this.agentEnabled =
+      this.config.get<string>('AGENT_ENABLED', 'true') !== 'false';
+  }
+
+  isAgentEnabled(): boolean {
+    return this.agentEnabled;
   }
 
   isEnabled(): boolean {
@@ -100,11 +120,12 @@ export class QuotaService {
 
     const row = await this.prisma.usageCounter.findUnique({
       where: { userId_day: { userId, day } },
-      select: { tokens: true, calls: true },
+      select: { tokens: true, calls: true, agentRuns: true },
     });
 
     const used = row?.tokens ?? 0;
     const limit = this.dailyTokens;
+    const agentRunsUsed = row?.agentRuns ?? 0;
 
     return {
       used,
@@ -112,10 +133,57 @@ export class QuotaService {
       remaining: Math.max(0, limit - used),
       percentUsed: limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0,
       calls: row?.calls ?? 0,
+      agentRunsUsed,
+      agentRunsLimit: this.agentDailyRuns,
+      agentRunsRemaining: Math.max(0, this.agentDailyRuns - agentRunsUsed),
+      agentEnabled: this.agentEnabled,
       resetsAt,
       allowed: !this.enabled || used < limit,
       enabled: this.enabled,
     };
+  }
+
+  /**
+   * Throw if this account has no deep search runs left today.
+   *
+   * Counted on start rather than on success on purpose. A run that fails partway
+   * has still spent most of its model calls, so refunding it would let a user
+   * loop a failing request and get unlimited searching out of it.
+   */
+  async assertAgentRunAvailable(userId: string): Promise<void> {
+    if (!this.agentEnabled) {
+      throw new AgentLimitException({
+        used: 0,
+        limit: 0,
+        resetsAt: startOfNextUtcDay(new Date()).toISOString(),
+      });
+    }
+
+    const summary = await this.summary(userId);
+    if (summary.agentRunsRemaining <= 0) {
+      throw new AgentLimitException({
+        used: summary.agentRunsUsed,
+        limit: summary.agentRunsLimit,
+        resetsAt: summary.resetsAt,
+      });
+    }
+  }
+
+  /** Count a deep search run against the day's allowance. */
+  async recordAgentRun(userId: string, now = new Date()): Promise<void> {
+    const day = startOfUtcDay(now);
+    try {
+      await this.prisma.usageCounter.upsert({
+        where: { userId_day: { userId, day } },
+        create: { userId, day, agentRuns: 1 },
+        update: { agentRuns: { increment: 1 } },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `Failed to record agent run for user ${userId}: ${message}`,
+      );
+    }
   }
 
   /**

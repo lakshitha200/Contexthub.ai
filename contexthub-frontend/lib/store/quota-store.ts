@@ -23,6 +23,13 @@ function spentFrom(details: QuotaExceededDetails, previous?: UsageSummary): Usag
     percentUsed: 100,
     allowed: false,
     calls: previous?.calls ?? 0,
+    // Deep search has its own allowance and its own refusal, so running out of
+    // tokens says nothing about it. Carry the last known values through rather
+    // than inventing figures that would make the toggle lie.
+    agentRunsUsed: previous?.agentRunsUsed ?? 0,
+    agentRunsLimit: previous?.agentRunsLimit ?? 0,
+    agentRunsRemaining: previous?.agentRunsRemaining ?? 0,
+    agentEnabled: previous?.agentEnabled ?? false,
     // A refusal only happens when enforcement is on, whatever a stale read said.
     enabled: true,
   };
@@ -75,6 +82,17 @@ export function handleQuotaError(err: unknown): boolean {
     return true;
   }
   return false;
+}
+
+/**
+ * Running out of deep searches is not running out of tokens.
+ *
+ * It gets no modal: the ordinary path still works, so the right response is a
+ * toast and a toggle that has gone quiet, not a dialog blocking the screen for
+ * a feature the user can simply do without.
+ */
+export function isAgentLimitError(err: unknown): boolean {
+  return err instanceof ApiError && err.isAgentLimitReached;
 }
 
 /**

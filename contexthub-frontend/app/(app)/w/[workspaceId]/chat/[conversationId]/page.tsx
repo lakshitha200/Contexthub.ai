@@ -1,16 +1,22 @@
 "use client";
 
-import { Globe, Layers } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { Globe, Layers, Telescope } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, use, useCallback, useEffect, useRef, useState } from "react";
 import { useChat } from "@/components/chat/chat-context";
 import { ChatComposer } from "@/components/chat/chat-composer";
+import { DeepSearchToggle } from "@/components/chat/deep-search-toggle";
 import { SourcesPanel } from "@/components/chat/citations";
 import { MessageBubble } from "@/components/chat/message-bubble";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { api, ApiError } from "@/lib/api";
-import { handleQuotaError, refreshQuota } from "@/lib/store/quota-store";
+import {
+  handleQuotaError,
+  isAgentLimitError,
+  refreshQuota,
+} from "@/lib/store/quota-store";
 import { attachmentHandoff, type PendingAttachment } from "@/lib/chat/attachments";
 import { useVoiceStore } from "@/lib/store/voice-store";
 import { useWorkspace } from "@/lib/store/workspace-context";
@@ -46,6 +52,10 @@ function ConversationView({
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  /** Whether the next question uses the research agent. Resets per turn below. */
+  const [deepSearch, setDeepSearch] = useState(false);
+  /** What deep search is doing right now, shown while it gathers. */
+  const [agentStatus, setAgentStatus] = useState<string>();
   const [sources, setSources] = useState<{ list: Citation[]; focusDocId?: string } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -54,6 +64,7 @@ function ConversationView({
   const lastAttachments = useRef<PendingAttachment[]>([]);
   /** The in-flight answer stream, so navigating away can abort it. */
   const streamRef = useRef<AbortController | null>(null);
+  const lastDeepSearch = useRef(false);
 
   const scrollToBottom = useCallback((smooth = true) => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: smooth ? "smooth" : "auto" });
@@ -63,7 +74,7 @@ function ConversationView({
   // inline error bubble on failure (no user message is appended here — that's
   // the caller's job).
   const runAsk = useCallback(
-    async (text: string, attachments: PendingAttachment[] = []) => {
+    async (text: string, attachments: PendingAttachment[] = [], deep = false) => {
       setBusy(true);
       const pendingId = `pending_${Date.now()}`;
       const pending: Message = {
@@ -94,10 +105,13 @@ function ConversationView({
           {
             content: text,
             images: attachments.length ? attachments.map((a) => a.image) : undefined,
+            ...(deep ? { deepSearch: true } : {}),
           },
           controller.signal,
         )) {
           if (event.type === "delta") {
+            // First token means the research phase is over.
+            if (streamed === "") setAgentStatus(undefined);
             streamed += event.text;
             // First token: swap the typing dots for the answer as it arrives.
             setMessages((m) =>
@@ -108,6 +122,17 @@ function ConversationView({
               ),
             );
             scrollToBottom();
+          } else if (event.type === "status") {
+            // Deep search only: several seconds pass before the first word is
+            // written, and naming the search in flight is the difference
+            // between "working" and "hung".
+            setAgentStatus(
+              event.stage === "searching" && event.detail
+                ? `Searching for “${event.detail}”`
+                : event.stage === "found" && event.detail
+                  ? `Read results for “${event.detail}”`
+                  : "Working out what to look for",
+            );
           } else if (event.type === "done") {
             settled = true;
             // The real row — carries the persisted id and the citations, which
@@ -131,7 +156,8 @@ function ConversationView({
 
         if (!settled) throw new Error("The answer ended unexpectedly.");
 
-        // That turn spent tokens, so let the sidebar meter catch up.
+        // That turn spent tokens, and a deep run spent one of the day's runs,
+        // so let the meter and the toggle's counter catch up.
         refreshQuota();
 
         // Refresh conversation meta (title may have been set on first turn).
@@ -150,6 +176,21 @@ function ConversationView({
           return;
         }
 
+        // Deep search is used up. Drop the placeholder and say so, rather than
+        // rendering a failed answer: the question was never asked, and asking
+        // it again without the toggle will work.
+        if (isAgentLimitError(err)) {
+          setMessages((m) => m.filter((x) => x.id !== pendingId));
+          setDeepSearch(false);
+          refreshQuota();
+          toast(
+            "info",
+            "Deep search used up for today",
+            "Ask again without it and you will still get a cited answer.",
+          );
+          return;
+        }
+
         setMessages((m) =>
           m.map((x) =>
             x.id === pendingId ? { ...x, pending: false, error: true, content: "" } : x,
@@ -157,6 +198,7 @@ function ConversationView({
         );
       } finally {
         if (streamRef.current === controller) streamRef.current = null;
+        setAgentStatus(undefined);
         setBusy(false);
       }
     },
@@ -164,7 +206,14 @@ function ConversationView({
   );
 
   const send = useCallback(
-    (text: string, attachments: PendingAttachment[] = []) => {
+    (
+      text: string,
+      attachments: PendingAttachment[] = [],
+      // The "new chat" screen makes the mode choice before this page exists, so
+      // the first question needs to carry it in rather than read our state.
+      deepOverride?: boolean,
+    ) => {
+      const deep = deepOverride ?? deepSearch;
       useVoiceStore.getState().stop(); // interrupt any answer being read
       const tempUser: Message = {
         id: `tmp_${Date.now()}`,
@@ -183,16 +232,23 @@ function ConversationView({
       // Keep the attachments for retry — the backend never stores them, so a
       // retry has to resend the bytes.
       lastAttachments.current = attachments;
-      void runAsk(text, attachments);
+      lastDeepSearch.current = deep;
+      void runAsk(text, attachments, deep);
+      // One run is one question. Leaving it on would silently spend tomorrow's
+      // allowance on a follow-up the user never chose to make expensive.
+      setDeepSearch(false);
     },
-    [conversationId, runAsk],
+    [conversationId, runAsk, deepSearch],
   );
 
   // Retry the last question after an error (reuses the last user message and
   // whatever images went with it).
   const retry = useCallback(() => {
     const lastUser = [...messages].reverse().find((m) => m.role === "USER");
-    if (lastUser) void runAsk(lastUser.content, lastAttachments.current);
+    // Retries deliberately fall back to the ordinary path: the run was already
+    // counted, and spending a second one on a question that just failed is the
+    // last thing someone with one run a day wants.
+    if (lastUser) void runAsk(lastUser.content, lastAttachments.current, false);
   }, [messages, runAsk]);
 
   // Load the conversation.
@@ -230,8 +286,9 @@ function ConversationView({
     const q = search.get("q");
     if (!loading && q && !sentQ.current) {
       sentQ.current = true;
+      const deep = search.get("deep") === "1";
       router.replace(`/w/${workspaceId}/chat/${conversationId}`);
-      void send(q, attachmentHandoff.take());
+      void send(q, attachmentHandoff.take(), deep);
     }
   }, [loading, search, send, router, workspaceId, conversationId]);
 
@@ -298,7 +355,39 @@ function ConversationView({
 
       {/* Composer */}
       <div className="mx-auto w-full max-w-3xl px-4 pb-6">
-        <ChatComposer autoFocus busy={busy} onSend={send} />
+        {/* Research progress. Sits above the box rather than inside the answer
+            bubble because it is not part of the answer: it disappears the
+            moment the first token arrives. */}
+        <AnimatePresence>
+          {agentStatus && (
+            <motion.p
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              className="mb-2 flex items-center gap-2 px-1 text-xs text-muted-foreground"
+            >
+              <Telescope className="h-3.5 w-3.5 shrink-0 text-primary" />
+              <span className="truncate">{agentStatus}</span>
+              <span className="ml-auto shrink-0 tabular-nums opacity-70">
+                deep search
+              </span>
+            </motion.p>
+          )}
+        </AnimatePresence>
+
+        <ChatComposer
+          autoFocus
+          busy={busy}
+          onSend={send}
+          modeSlot={
+            <DeepSearchToggle
+              value={deepSearch}
+              onChange={setDeepSearch}
+              disabled={busy}
+            />
+          }
+        />
       </div>
 
       <SourcesPanel

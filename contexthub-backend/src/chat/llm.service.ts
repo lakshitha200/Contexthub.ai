@@ -5,7 +5,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type, type Content } from '@google/genai';
 
 /** An image attached to a turn, as raw base64 (no `data:` prefix). */
 export interface LlmImage {
@@ -19,6 +19,41 @@ export interface LlmTurn {
   text: string;
   /** Images the user attached to this turn. User turns only. */
   images?: LlmImage[];
+}
+
+/** A tool the model may call, described in provider-neutral terms. */
+export interface LlmToolDefinition {
+  name: string;
+  description: string;
+  /** Property name to its schema. Only the subset the agent actually needs. */
+  parameters: Record<
+    string,
+    { type: 'string'; description: string; required?: boolean }
+  >;
+}
+
+/** The model asking for a tool to be run. */
+export interface LlmToolCall {
+  name: string;
+  args: Record<string, string>;
+}
+
+/**
+ * One turn of a tool-using exchange.
+ *
+ * Kept provider-neutral for the same reason as `LlmTurn`: the agent builds a
+ * transcript out of these and never sees a Gemini `Content` object, so this
+ * file stays the only one that knows which provider is behind it.
+ */
+export type LlmAgentTurn =
+  | { role: 'user'; text: string }
+  | { role: 'model'; text?: string; calls?: LlmToolCall[] }
+  | { role: 'tool'; name: string; result: unknown };
+
+/** What the model did when offered tools: talked, called tools, or both. */
+export interface LlmToolStep {
+  text: string;
+  calls: LlmToolCall[];
 }
 
 /** What a call actually cost, as reported by the provider. */
@@ -154,6 +189,102 @@ export class LlmService implements OnModuleInit {
       this.logger.error(`Gemini generate failed: ${message}`);
       throw new InternalServerErrorException(`LLM provider error: ${message}`);
     }
+  }
+
+  /**
+   * Offer the model a set of tools and return whatever it does next: some text,
+   * some tool calls, or both.
+   *
+   * This runs exactly one step. Looping, deciding when enough has been gathered,
+   * and enforcing a ceiling on rounds all belong to the caller, because those
+   * are product decisions rather than provider ones.
+   */
+  async step(
+    turns: LlmAgentTurn[],
+    systemInstruction: string,
+    tools: LlmToolDefinition[],
+    options: LlmOptions = {},
+  ): Promise<LlmToolStep> {
+    try {
+      const response = await this.client.models.generateContent({
+        model: this.model,
+        contents: turns.map((t) => this.toContent(t)),
+        config: {
+          systemInstruction,
+          temperature: options.temperature ?? this.temperature,
+          maxOutputTokens: options.maxOutputTokens ?? this.maxOutputTokens,
+          tools: [
+            {
+              functionDeclarations: tools.map((tool) => ({
+                name: tool.name,
+                description: tool.description,
+                parameters: {
+                  type: Type.OBJECT,
+                  properties: Object.fromEntries(
+                    Object.entries(tool.parameters).map(([name, spec]) => [
+                      name,
+                      { type: Type.STRING, description: spec.description },
+                    ]),
+                  ),
+                  required: Object.entries(tool.parameters)
+                    .filter(([, spec]) => spec.required)
+                    .map(([name]) => name),
+                },
+              })),
+            },
+          ],
+        },
+      });
+
+      const usage = toUsage(response.usageMetadata);
+      if (usage) options.onUsage?.(usage);
+
+      const calls: LlmToolCall[] = (response.functionCalls ?? []).map((c) => ({
+        name: c.name ?? '',
+        args: Object.fromEntries(
+          Object.entries(c.args ?? {}).map(([k, v]) => [k, String(v ?? '')]),
+        ),
+      }));
+
+      return { text: response.text?.trim() ?? '', calls };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Gemini tool step failed: ${message}`);
+      throw new InternalServerErrorException(`LLM provider error: ${message}`);
+    }
+  }
+
+  /** Map one neutral agent turn onto the provider's content shape. */
+  private toContent(turn: LlmAgentTurn): Content {
+    if (turn.role === 'user') {
+      return { role: 'user', parts: [{ text: turn.text }] };
+    }
+
+    if (turn.role === 'model') {
+      return {
+        role: 'model',
+        parts: [
+          ...(turn.text ? [{ text: turn.text }] : []),
+          ...(turn.calls ?? []).map((c) => ({
+            functionCall: { name: c.name, args: c.args },
+          })),
+        ],
+      };
+    }
+
+    // A tool result. Gemini carries these on a user turn, which is why this
+    // mapping exists rather than the caller writing it out.
+    return {
+      role: 'user',
+      parts: [
+        {
+          functionResponse: {
+            name: turn.name,
+            response: { result: turn.result },
+          },
+        },
+      ],
+    };
   }
 
   /**

@@ -9,12 +9,19 @@ import {
 import { randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { Prisma } from '../../../generated/prisma/client';
+import { QuotaExceededException } from '../../quota/quota-exceeded.exception';
 
 /** Shape every failed request returns, so the frontend can rely on one contract. */
 export interface ErrorResponseBody {
   statusCode: number;
   error: string;
   message: string | string[];
+  /** Stable machine-readable discriminator, when the thrower set one. Clients
+   *  branch on this rather than on status codes, which are too coarse: 429 is
+   *  both "out of allowance" and ordinary rate limiting. */
+  code?: string;
+  /** Structured payload belonging to `code`, for rendering a useful message. */
+  details?: unknown;
   path: string;
   method: string;
   requestId: string;
@@ -25,6 +32,8 @@ interface NormalizedError {
   status: number;
   message: string | string[];
   error: string;
+  code?: string;
+  details?: unknown;
 }
 
 /**
@@ -46,12 +55,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
     // The interceptor normally sets this; guards can throw before it runs.
     request.requestId ??= randomUUID();
 
-    const { status, message, error } = this.normalize(exception);
+    const { status, message, error, code, details } = this.normalize(exception);
 
     const body: ErrorResponseBody = {
       statusCode: status,
       error,
       message,
+      ...(code ? { code } : {}),
+      ...(details !== undefined ? { details } : {}),
       path: request.originalUrl ?? request.url,
       method: request.method,
       requestId: request.requestId,
@@ -62,6 +73,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     // A streamed/aborted response cannot be rewritten.
     if (response.headersSent) return;
+
+    if (exception instanceof QuotaExceededException) {
+      response.setHeader('Retry-After', exception.retryAfterSeconds());
+    }
+
     response.status(status).json(body);
   }
 
@@ -74,11 +90,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
         return { status, message: payload, error: this.reason(status) };
       }
 
-      const shaped = payload as { message?: string | string[]; error?: string };
+      const shaped = payload as {
+        message?: string | string[];
+        error?: string;
+        code?: string;
+        details?: unknown;
+      };
       return {
         status,
         message: shaped.message ?? exception.message,
         error: shaped.error ?? this.reason(status),
+        code: shaped.code,
+        details: shaped.details,
       };
     }
 

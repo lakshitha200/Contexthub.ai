@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import {
   MessageRole,
   Prisma,
@@ -17,6 +17,8 @@ import { UpdateConversationDto } from './dto/update-conversation.dto';
  */
 @Injectable()
 export class ConversationService {
+  private readonly logger = new Logger(ConversationService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly collections: CollectionService,
@@ -85,27 +87,45 @@ export class ConversationService {
     return { success: true };
   }
 
-  /** Persist one message and bump the conversation's `updatedAt`. */
+  /**
+   * Persist one message and bump the conversation's `updatedAt`.
+   *
+   * Deliberately two plain writes rather than one transaction. Saving the
+   * message is what actually matters, and the bump only affects the order of
+   * the conversation list. Wrapping them together meant that when the pool was
+   * busy, the transaction could not start at all and the message was lost with
+   * it — trading a real answer, already paid for, against the ordering of a
+   * sidebar. If the bump fails now, the message is still safe and the next one
+   * corrects the timestamp.
+   */
   async addMessage(
     conversationId: string,
     role: MessageRole,
     content: string,
     citations?: Prisma.InputJsonValue,
   ) {
-    const [message] = await this.prisma.$transaction([
-      this.prisma.message.create({
-        data: {
-          conversationId,
-          role,
-          content,
-          ...(citations !== undefined ? { citations } : {}),
-        },
-      }),
-      this.prisma.conversation.update({
+    const message = await this.prisma.message.create({
+      data: {
+        conversationId,
+        role,
+        content,
+        ...(citations !== undefined ? { citations } : {}),
+      },
+    });
+
+    try {
+      await this.prisma.conversation.update({
         where: { id: conversationId },
         data: { updatedAt: new Date() },
-      }),
-    ]);
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Saved message ${message.id} but could not bump conversation ${conversationId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
     return message;
   }
 

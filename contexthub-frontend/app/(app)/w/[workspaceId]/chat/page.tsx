@@ -6,11 +6,13 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useChat } from "@/components/chat/chat-context";
 import { ChatComposer } from "@/components/chat/chat-composer";
+import { DeepSearchToggle } from "@/components/chat/deep-search-toggle";
 import { ScopeSelector } from "@/components/chat/scope-selector";
 import { Logo } from "@/components/brand";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
 import { attachmentHandoff, type PendingAttachment } from "@/lib/chat/attachments";
+import { handleQuotaError } from "@/lib/store/quota-store";
 import { useWorkspace } from "@/lib/store/workspace-context";
 
 const SUGGESTIONS = [
@@ -26,6 +28,7 @@ export default function NewChatPage() {
   const { workspaceId, workspace } = useWorkspace();
   const { upsert } = useChat();
   const [scope, setScope] = useState<string | null>(null);
+  const [deepSearch, setDeepSearch] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function start(text: string, attachments: PendingAttachment[] = []) {
@@ -39,11 +42,17 @@ export default function NewChatPage() {
       // The question rides along in the URL; images are far too large for that,
       // so they wait in the hand-off slot for the conversation page to claim.
       attachmentHandoff.set(attachments);
-      router.push(`/w/${workspaceId}/chat/${conv.id}?q=${encodeURIComponent(text)}`);
-    } catch {
+      router.push(
+        `/w/${workspaceId}/chat/${conv.id}?q=${encodeURIComponent(text)}${
+          deepSearch ? "&deep=1" : ""
+        }`,
+      );
+    } catch (err) {
       attachmentHandoff.take(); // don't leave a stale hand-off behind
       for (const a of attachments) URL.revokeObjectURL(a.previewUrl);
-      toast("error", "Couldn't start conversation");
+      // The quota modal already says what happened; a toast as well would tell
+      // them the same thing twice in two different registers.
+      if (!handleQuotaError(err)) toast("error", "Couldn't start conversation");
       setBusy(false);
     }
   }
@@ -95,6 +104,13 @@ export default function NewChatPage() {
           busy={busy}
           onSend={start}
           scopeSlot={<ScopeSelector value={scope} onChange={setScope} />}
+          modeSlot={
+            <DeepSearchToggle
+              value={deepSearch}
+              onChange={setDeepSearch}
+              disabled={busy}
+            />
+          }
         />
         <p className="mt-2 text-center text-xs text-muted-foreground">
           Answers come only from this workspace. Beta software, so check the cited sources.

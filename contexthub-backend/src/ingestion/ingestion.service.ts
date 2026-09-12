@@ -57,7 +57,11 @@ export class IngestionService {
       }
 
       await this.setStatus(doc.id, DocStatus.ANALYZING);
-      const analysis = await this.analysis.analyze(doc.filename, blocks);
+      const analysis = await this.analysis.analyze(
+        doc.filename,
+        blocks,
+        doc.uploaderId,
+      );
       await this.saveAnalysis(doc.id, analysis);
 
       await this.setStatus(doc.id, DocStatus.EMBEDDING);

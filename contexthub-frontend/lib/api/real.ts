@@ -10,6 +10,7 @@ import type {
   Document,
   Message,
   RegisterResult,
+  UsageSummary,
   User,
   Workspace,
   WorkspaceMember,
@@ -87,6 +88,9 @@ function mapMember(m: RawMember, workspaceId: string): WorkspaceMember {
 }
 
 export const realApi: Api = {
+  usage: {
+    me: () => http.get<UsageSummary>("/usage/me"),
+  },
   auth: {
     async login(p) {
       const res = await http.post<AuthResponse>("/auth/login", p, { anonymous: true });

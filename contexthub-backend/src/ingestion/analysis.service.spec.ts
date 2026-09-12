@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { QuotaService } from '../quota/quota.service';
 import { DocType } from '../../generated/prisma/client';
 import { AnalysisService, buildSample } from './analysis.service';
 import { buildChunkContext } from './ingestion.service';
@@ -36,7 +37,13 @@ describe('AnalysisService', () => {
     const config = {
       get: (key: string, fallback?: string) => overrides[key] ?? fallback,
     } as unknown as ConfigService;
-    return new AnalysisService(config);
+    // These tests only exercise `parse`, which never reaches the provider and
+    // so never meters anything. A stub keeps the constructor satisfied without
+    // pulling Prisma into a pure parsing test.
+    const quota = {
+      record: () => Promise.resolve(),
+    } as unknown as QuotaService;
+    return new AnalysisService(config, quota);
   }
 
   describe('parse()', () => {

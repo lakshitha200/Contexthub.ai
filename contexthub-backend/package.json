@@ -24,6 +24,7 @@
     "test:e2e:db:clean": "docker exec contexthub-test-db psql -U qa -d contexthub_test -c \"TRUNCATE TABLE \\\"User\\\", \\\"RefreshToken\\\", \\\"Invite\\\", \\\"VerificationToken\\\", \\\"OAuthAccount\\\", \\\"Workspace\\\", \\\"WorkspaceMember\\\", \\\"Collection\\\", \\\"Document\\\", \\\"Chunk\\\", \\\"Conversation\\\", \\\"Message\\\", \\\"AuditLog\\\", \\\"Job\\\" RESTART IDENTITY CASCADE;\""
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1131.0",
     "@google/genai": "^2.8.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.4",

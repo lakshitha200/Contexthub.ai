@@ -1,0 +1,35 @@
+/// One day's AI usage for one account.
+///
+/// Rows are per user per UTC day rather than a single running total, so the
+/// allowance resets on its own with no scheduled job to run, and so there is a
+/// history to look at when someone asks why they ran out.
+///
+/// Tokens are what the provider actually reported for the call (prompt plus
+/// output), never an estimate. An estimate that drifts from the bill is worse
+/// than no number at all.
+model UsageCounter {
+  id     String @id @default(cuid())
+  userId String
+
+  /// Midnight UTC of the day this bucket covers.
+  day DateTime @db.Date
+
+  /// Total tokens the provider billed to this account today.
+  tokens Int @default(0)
+  /// Provider calls made, kept separately because a burst of tiny calls is its
+  /// own kind of abuse that a token count alone would hide.
+  calls Int @default(0)
+
+  /// Deep search runs started today. Counted separately from tokens because it
+  /// is rationed by its own rule: a run fans out into several model calls, so
+  /// it is limited by how many times it may be started, not by what it spends.
+  agentRuns Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, day])
+  @@index([day])
+}

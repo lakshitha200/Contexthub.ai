@@ -22,12 +22,15 @@ export function ChatComposer({
   busy,
   placeholder = "Ask anything about your documents…",
   scopeSlot,
+  modeSlot,
   autoFocus,
 }: {
   onSend: (text: string, attachments: PendingAttachment[]) => void;
   busy?: boolean;
   placeholder?: string;
   scopeSlot?: React.ReactNode;
+  /** Retrieval mode control, rendered beside the scope selector. */
+  modeSlot?: React.ReactNode;
   autoFocus?: boolean;
 }) {
   const [value, setValue] = useState("");
@@ -233,7 +236,12 @@ export function ChatComposer({
       </AnimatePresence>
 
       <div className="flex items-center justify-between gap-2 px-3 pb-3 pt-1">
-        <div className="min-w-0">{scopeSlot}</div>
+        {/* Scope and mode belong together: both change what the question
+            searches, and both are decided before pressing send. */}
+        <div className="flex min-w-0 items-center gap-1.5">
+          {scopeSlot}
+          {modeSlot}
+        </div>
 
         <div className="flex items-center gap-1.5">
           <input

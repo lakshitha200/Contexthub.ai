@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GoogleGenAI } from '@google/genai';
+import { QuotaService } from '../quota/quota.service';
 
 /** Returned when the model decides an image carries no useful information. */
 export const VISION_SKIP = 'SKIP';
@@ -28,7 +29,10 @@ export class VisionService implements OnModuleInit {
   /** How many vision calls to run at once (free tiers rate-limit hard). */
   readonly concurrency: number;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly quota: QuotaService,
+  ) {
     this.model = this.config.get<string>(
       'VISION_MODEL',
       this.config.get<string>('CHAT_MODEL', 'gemini-2.5-flash'),
@@ -68,6 +72,7 @@ export class VisionService implements OnModuleInit {
     image: Buffer,
     mimeType: string,
     label: string,
+    ownerId?: string | null,
   ): Promise<string | null> {
     const text = await this.call(
       image,
@@ -81,6 +86,7 @@ Rules:
 - Transcribe only what is actually legible. Never guess at unreadable text.
 - If the page contains no readable text at all, reply with exactly ${VISION_SKIP}.`,
       label,
+      ownerId,
     );
     return this.orNullIfSkipped(text);
   }
@@ -93,7 +99,12 @@ Rules:
   async describeImage(
     image: Buffer,
     mimeType: string,
-    context: { filename: string; pageNumber?: number | null },
+    context: {
+      filename: string;
+      pageNumber?: number | null;
+      /** Account this call is billed to. Null when the uploader is gone. */
+      ownerId?: string | null;
+    },
   ): Promise<string | null> {
     const where = context.pageNumber
       ? `page ${context.pageNumber} of "${context.filename}"`
@@ -156,6 +167,7 @@ Never invent numbers, names, or dates that are not visible in the image.`,
     mimeType: string,
     prompt: string,
     label: string,
+    ownerId?: string | null,
   ): Promise<string | null> {
     if (!this.enabled) return null;
 
@@ -184,6 +196,11 @@ Never invent numbers, names, or dates that are not visible in the image.`,
           ),
         },
       });
+
+      // Bill the uploader. Vision is the costliest thing this product does, so
+      // leaving it unmetered would make the allowance meaningless.
+      const total = response.usageMetadata?.totalTokenCount ?? 0;
+      if (ownerId && total > 0) await this.quota.record(ownerId, total);
 
       return response.text?.trim() ?? null;
     } catch (err) {

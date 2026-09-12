@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { CollectionModule } from '../collection/collection.module';
 import { WorkspaceGuard } from '../workspace/guards/workspace.guard';
 import { ChatController } from './chat.controller';
+import { AgentService } from './agent.service';
 import { ChatService } from './chat.service';
 import { ConversationService } from './conversation.service';
 import { LlmService } from './llm.service';
@@ -24,6 +25,7 @@ import { RetrievalService } from './retrieval.service';
     LlmService,
     QueryRewriterService,
     ChatService,
+    AgentService,
     WorkspaceGuard,
   ],
   exports: [ConversationService],

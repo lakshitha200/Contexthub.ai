@@ -17,12 +17,17 @@ import type {
   Message,
   RegisterPayload,
   RegisterResult,
+  UsageSummary,
   User,
   Workspace,
   WorkspaceMember,
 } from "../types";
 
 export interface Api {
+  usage: {
+    /** Current AI allowance for the signed-in account. */
+    me(): Promise<UsageSummary>;
+  };
   auth: {
     login(p: LoginPayload): Promise<AuthResponse>;
     register(p: RegisterPayload): Promise<RegisterResult>;

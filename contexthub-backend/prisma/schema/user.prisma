@@ -22,4 +22,5 @@ model User {
   auditLogs          AuditLog[]
   oauthAccounts      OAuthAccount[]
   verificationTokens VerificationToken[]
+  usageCounters      UsageCounter[]
 }

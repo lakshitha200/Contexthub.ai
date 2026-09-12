@@ -10,6 +10,7 @@ import { JobService } from '../jobs/job.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { ListDocumentsQueryDto } from './dto/list-documents.query';
+import { QuotaService } from '../quota/quota.service';
 import { UploadedFileLike } from './dto/uploaded-file';
 
 const ALLOWED_MIME_TYPES = new Set([
@@ -35,6 +36,7 @@ export class DocumentService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly collections: CollectionService,
+    private readonly quota: QuotaService,
     private readonly config: ConfigService,
     private readonly jobs: JobService,
   ) {}
@@ -50,10 +52,20 @@ export class DocumentService {
     await this.collections.getById(workspaceId, collectionId);
     this.validateFile(file);
 
+    // Ingestion is the expensive half of this product: one scanned PDF can be
+    // dozens of vision calls. Refuse at the door rather than accepting the file,
+    // queueing it, and failing it deep in the worker where the user sees only a
+    // FAILED badge and no reason.
+    await this.quota.assertWithinQuota(uploaderId);
+
     const storageKey = await this.storage.save(
       workspaceId,
       file.originalname,
       file.buffer,
+      // Recorded on the object so a direct fetch from the bucket serves the
+      // right type. Downloads through the API set their own header from the
+      // document row, so this only matters outside that path.
+      file.mimetype,
     );
 
     const document = await this.prisma.document.create({
@@ -123,7 +135,7 @@ export class DocumentService {
     return {
       filename: document.filename,
       mimeType: document.mimeType,
-      stream: this.storage.createReadStream(document.storageKey),
+      stream: await this.storage.createReadStream(document.storageKey),
     };
   }
 
@@ -170,7 +182,7 @@ export class DocumentService {
 
     return {
       mimeType: mimeTypeForKey(chunk.imageKey),
-      stream: this.storage.createReadStream(chunk.imageKey),
+      stream: await this.storage.createReadStream(chunk.imageKey),
     };
   }
 

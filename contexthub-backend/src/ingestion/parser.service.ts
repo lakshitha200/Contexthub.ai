@@ -13,6 +13,12 @@ export interface ParsableDocument {
   storageKey: string;
   mimeType: string;
   filename: string;
+  /**
+   * Who uploaded it, so vision calls made while parsing are billed to the right
+   * account. Nullable because the column is `onDelete: SetNull`: a document can
+   * outlive the person who uploaded it, and that work is simply unattributed.
+   */
+  uploaderId: string | null;
 }
 
 /** Where a block's text came from. Mirrors the ChunkKind enum in Prisma. */
@@ -72,7 +78,7 @@ export class ParserService {
 
   async parse(doc: ParsableDocument): Promise<DocumentBlock[]> {
     const buffer = await streamToBuffer(
-      this.storage.createReadStream(doc.storageKey),
+      await this.storage.createReadStream(doc.storageKey),
     );
 
     const blocks = (await this.extract(buffer, doc)).filter(
@@ -216,6 +222,7 @@ export class ParserService {
         Buffer.from(page.data),
         'image/png',
         `${doc.filename} p.${page.pageNumber}`,
+        doc.uploaderId,
       ),
     );
 
@@ -362,7 +369,11 @@ export class ParserService {
         const description = await this.vision.describeImage(
           image.data,
           mimeType,
-          { filename: doc.filename, pageNumber: image.pageNumber },
+          {
+            filename: doc.filename,
+            pageNumber: image.pageNumber,
+            ownerId: doc.uploaderId,
+          },
         );
         if (!description) return null;
 
@@ -371,6 +382,7 @@ export class ParserService {
           doc.workspaceId,
           `${doc.id}-p${image.pageNumber}-${image.name}.${extensionFor(mimeType)}`,
           image.data,
+          mimeType,
         );
 
         return {
@@ -406,6 +418,7 @@ export class ParserService {
 
     const description = await this.vision.describeImage(buffer, doc.mimeType, {
       filename: doc.filename,
+      ownerId: doc.uploaderId,
     });
 
     if (!description) {

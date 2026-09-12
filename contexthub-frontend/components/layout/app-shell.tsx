@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Wordmark } from "@/components/brand";
 import { BetaBanner } from "@/components/layout/beta-banner";
 import { Sidebar } from "@/components/layout/sidebar";
+import { QuotaModal } from "@/components/quota/quota-modal";
 import { useWorkspace } from "@/lib/store/workspace-context";
 import { EmptyState } from "@/components/ui/misc";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
+      {/* Mounted once for the whole app: chat, uploads and anything metered
+          later all refuse the same way and should explain themselves the
+          same way. */}
+      <QuotaModal />
       <BetaBanner />
 
       <div className="flex min-h-0 flex-1 overflow-hidden">

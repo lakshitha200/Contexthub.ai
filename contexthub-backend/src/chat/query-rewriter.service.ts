@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MessageRole } from '../../generated/prisma/client';
-import { LlmService } from './llm.service';
+import { LlmService, type LlmUsage } from './llm.service';
 
 /** The shape of a past message this service needs. */
 export interface HistoryMessage {
@@ -70,6 +70,7 @@ export class QueryRewriterService {
   async rewrite(
     question: string,
     priorMessages: HistoryMessage[],
+    onUsage?: (usage: LlmUsage) => void,
   ): Promise<string> {
     // First question in a conversation: there is nothing to resolve against.
     if (!this.enabled || priorMessages.length === 0) return question;
@@ -92,7 +93,7 @@ export class QueryRewriterService {
         ],
         SYSTEM_INSTRUCTION,
         // Mechanical rewriting, and the output is one short line.
-        { temperature: 0, maxOutputTokens: 128 },
+        { temperature: 0, maxOutputTokens: 128, onUsage },
       );
 
       const rewritten = sanitize(answer);

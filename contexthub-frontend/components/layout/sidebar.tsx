@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Wordmark } from "@/components/brand";
 import { UserMenu } from "@/components/layout/user-menu";
+import { UsageMeter } from "@/components/quota/usage-meter";
 import { WorkspaceSwitcher } from "@/components/layout/workspace-switcher";
 import { useWorkspace } from "@/lib/store/workspace-context";
 import { cn, colorFromString } from "@/lib/utils";
@@ -88,6 +89,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           })}
         </ul>
       </div>
+
+      <UsageMeter />
 
       <div className="flex items-center justify-between border-t border-border p-3">
         <div className="flex items-center gap-2.5">

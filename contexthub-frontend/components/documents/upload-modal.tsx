@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { api, ApiError } from "@/lib/api";
+import { handleQuotaError, refreshQuota } from "@/lib/store/quota-store";
 import { useWorkspace } from "@/lib/store/workspace-context";
 import type { Collection, Document } from "@/lib/types";
 import { cn, colorFromString, formatBytes } from "@/lib/utils";
@@ -66,11 +67,20 @@ export function UploadModal({
         onUploaded(doc);
         ok++;
       } catch (err) {
+        // Out of allowance: stop the whole batch. Every remaining file would
+        // fail identically, and a stack of toasts saying so is just noise on
+        // top of the modal that already explains it.
+        if (handleQuotaError(err)) break;
+
         const reason = err instanceof ApiError ? err.message : "Upload failed";
         toast("error", `Couldn't upload ${file.name}`, reason);
       }
     }
     setUploading(false);
+    // Ingestion spends its tokens in the worker, so this reading will still be
+    // climbing afterwards. Worth showing anyway: the meter moving is what tells
+    // people an upload is not free.
+    if (ok) refreshQuota();
     if (ok) toast("success", `${ok} file${ok > 1 ? "s" : ""} uploaded`, "Processing started.");
     setFiles([]);
     setChosen(null); // next open follows the page's selected collection again

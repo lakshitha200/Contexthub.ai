@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GoogleGenAI, Type } from '@google/genai';
+import { QuotaService } from '../quota/quota.service';
 import { DocType } from '../../generated/prisma/client';
 import type { DocumentBlock } from './parser.service';
 
@@ -47,7 +48,10 @@ export class AnalysisService implements OnModuleInit {
   private readonly maxTopics: number;
   private client!: GoogleGenAI;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly quota: QuotaService,
+  ) {
     this.model = this.config.get<string>(
       'ANALYSIS_MODEL',
       this.config.get<string>('CHAT_MODEL', 'gemini-2.5-flash'),
@@ -83,6 +87,7 @@ export class AnalysisService implements OnModuleInit {
   async analyze(
     filename: string,
     blocks: DocumentBlock[],
+    ownerId?: string | null,
   ): Promise<DocumentAnalysis | null> {
     if (!this.enabled) return null;
 
@@ -123,6 +128,11 @@ export class AnalysisService implements OnModuleInit {
           },
         },
       });
+
+      // Bill the uploader before interpreting the result: the provider charged
+      // for this call whether or not the JSON turns out to be usable.
+      const total = response.usageMetadata?.totalTokenCount ?? 0;
+      if (ownerId && total > 0) await this.quota.record(ownerId, total);
 
       const parsed = this.parse(response.text);
       if (!parsed) {

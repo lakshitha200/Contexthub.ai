@@ -78,7 +78,7 @@ export class ParserService {
 
   async parse(doc: ParsableDocument): Promise<DocumentBlock[]> {
     const buffer = await streamToBuffer(
-      this.storage.createReadStream(doc.storageKey),
+      await this.storage.createReadStream(doc.storageKey),
     );
 
     const blocks = (await this.extract(buffer, doc)).filter(
@@ -382,6 +382,7 @@ export class ParserService {
           doc.workspaceId,
           `${doc.id}-p${image.pageNumber}-${image.name}.${extensionFor(mimeType)}`,
           image.data,
+          mimeType,
         );
 
         return {

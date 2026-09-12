@@ -62,6 +62,10 @@ export class DocumentService {
       workspaceId,
       file.originalname,
       file.buffer,
+      // Recorded on the object so a direct fetch from the bucket serves the
+      // right type. Downloads through the API set their own header from the
+      // document row, so this only matters outside that path.
+      file.mimetype,
     );
 
     const document = await this.prisma.document.create({
@@ -131,7 +135,7 @@ export class DocumentService {
     return {
       filename: document.filename,
       mimeType: document.mimeType,
-      stream: this.storage.createReadStream(document.storageKey),
+      stream: await this.storage.createReadStream(document.storageKey),
     };
   }
 
@@ -178,7 +182,7 @@ export class DocumentService {
 
     return {
       mimeType: mimeTypeForKey(chunk.imageKey),
-      stream: this.storage.createReadStream(chunk.imageKey),
+      stream: await this.storage.createReadStream(chunk.imageKey),
     };
   }
 

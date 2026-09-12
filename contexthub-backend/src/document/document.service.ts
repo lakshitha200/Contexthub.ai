@@ -10,6 +10,7 @@ import { JobService } from '../jobs/job.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { ListDocumentsQueryDto } from './dto/list-documents.query';
+import { QuotaService } from '../quota/quota.service';
 import { UploadedFileLike } from './dto/uploaded-file';
 
 const ALLOWED_MIME_TYPES = new Set([
@@ -35,6 +36,7 @@ export class DocumentService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly collections: CollectionService,
+    private readonly quota: QuotaService,
     private readonly config: ConfigService,
     private readonly jobs: JobService,
   ) {}
@@ -49,6 +51,12 @@ export class DocumentService {
     // Throws 404 if the collection is not in this workspace.
     await this.collections.getById(workspaceId, collectionId);
     this.validateFile(file);
+
+    // Ingestion is the expensive half of this product: one scanned PDF can be
+    // dozens of vision calls. Refuse at the door rather than accepting the file,
+    // queueing it, and failing it deep in the worker where the user sees only a
+    // FAILED badge and no reason.
+    await this.quota.assertWithinQuota(uploaderId);
 
     const storageKey = await this.storage.save(
       workspaceId,

@@ -9,13 +9,32 @@ import { API_BASE_URL } from "./config";
 
 export class ApiError extends Error {
   status: number;
+  /**
+   * Stable discriminator from the backend, when it sent one. Branch on this
+   * rather than on `status`: 429 is both "out of AI allowance" and ordinary
+   * rate limiting, and those want very different treatment in the UI.
+   */
+  code?: string;
   details?: unknown;
-  constructor(status: number, message: string, details?: unknown) {
+  constructor(status: number, message: string, details?: unknown, code?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.details = details;
+    this.code = code;
   }
+
+  /** The account has spent its daily AI allowance. */
+  get isQuotaExceeded(): boolean {
+    return this.code === "QUOTA_EXCEEDED";
+  }
+}
+
+/** Body the backend returns for a spent allowance, under `details`. */
+export interface QuotaExceededDetails {
+  used: number;
+  limit: number;
+  resetsAt: string;
 }
 
 type FetchOpts = {
@@ -75,16 +94,20 @@ async function raw<T>(path: string, opts: FetchOpts, retry = true): Promise<T> {
   if (!res.ok) {
     let message = res.statusText;
     let details: unknown;
+    let code: string | undefined;
     try {
       const data = await res.json();
-      details = data;
+      // `details` falls back to the whole body: callers predating the typed
+      // `details` field still read validation errors off it.
+      details = data?.details ?? data;
+      code = data?.code;
       message = Array.isArray(data?.message)
         ? data.message.join(", ")
         : data?.message ?? message;
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(res.status, message, details);
+    throw new ApiError(res.status, message, details, code);
   }
 
   if (res.status === 204) return undefined as T;
@@ -147,15 +170,19 @@ async function* rawStream<T>(
   if (!res.ok || !res.body) {
     // The error arrives as a normal JSON body — the stream never started.
     let message = res.statusText;
+    let code: string | undefined;
+    let details: unknown;
     try {
       const data = await res.json();
       message = Array.isArray(data?.message)
         ? data.message.join(", ")
         : data?.message ?? message;
+      code = data?.code;
+      details = data?.details;
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, details, code);
   }
 
   const reader = res.body.getReader();

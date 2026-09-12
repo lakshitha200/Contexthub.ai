@@ -245,7 +245,16 @@ export interface AskResponse {
 export type AskStreamEvent =
   | { type: "delta"; text: string }
   | ({ type: "done" } & AskResponse)
-  | { type: "error"; statusCode: number; message: string };
+  | {
+      type: "error";
+      statusCode: number;
+      message: string;
+      /** Same discriminator the JSON error contract uses, when the server set
+       *  one. Once headers are flushed a refusal can only travel as a frame,
+       *  so the frame has to carry what a JSON body would have. */
+      code?: string;
+      details?: unknown;
+    };
 
 // ------------------------------------------------------------------
 // Request payloads (DTOs)
@@ -287,4 +296,28 @@ export interface AskPayload {
    * file as a document if it should become searchable.
    */
   images?: AskImage[];
+}
+
+/* ------------------------------------------------------------------ */
+/*  Usage / quota                                                      */
+/* ------------------------------------------------------------------ */
+
+/** One account's AI allowance for the current window. Mirrors QuotaSummary. */
+export interface UsageSummary {
+  /** Provider-reported tokens spent in this window. */
+  used: number;
+  /** Tokens allowed per window. */
+  limit: number;
+  /** Never negative: the final call of a window may overshoot the limit. */
+  remaining: number;
+  /** 0 to 100, for a progress bar. */
+  percentUsed: number;
+  /** Provider calls made in this window. */
+  calls: number;
+  /** ISO timestamp when the allowance resets. */
+  resetsAt: string;
+  /** False once the allowance is spent. */
+  allowed: boolean;
+  /** False when the server has quotas switched off; hide the meter entirely. */
+  enabled: boolean;
 }

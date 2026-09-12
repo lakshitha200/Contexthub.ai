@@ -14,6 +14,7 @@ import { EmbeddingModule } from './embedding/embedding.module';
 import { IngestionModule } from './ingestion/ingestion.module';
 import { JobModule } from './jobs/job.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { QuotaModule } from './quota/quota.module';
 import { StorageModule } from './storage/storage.module';
 import { WorkspaceModule } from './workspace/workspace.module';
 
@@ -22,6 +23,7 @@ import { WorkspaceModule } from './workspace/workspace.module';
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
     PrismaModule,
+    QuotaModule,
     AuthModule,
     StorageModule,
     EmbeddingModule,

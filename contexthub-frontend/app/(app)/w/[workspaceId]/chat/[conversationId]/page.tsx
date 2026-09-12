@@ -9,7 +9,8 @@ import { SourcesPanel } from "@/components/chat/citations";
 import { MessageBubble } from "@/components/chat/message-bubble";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
+import { handleQuotaError, refreshQuota } from "@/lib/store/quota-store";
 import { attachmentHandoff, type PendingAttachment } from "@/lib/chat/attachments";
 import { useVoiceStore } from "@/lib/store/voice-store";
 import { useWorkspace } from "@/lib/store/workspace-context";
@@ -115,19 +116,40 @@ function ConversationView({
               m.map((x) => (x.id === pendingId ? event.message : x)),
             );
           } else {
-            throw new Error(event.message);
+            // Rebuild the ApiError the frame stands in for, so a refusal that
+            // arrived mid-stream is handled exactly like one that arrived as a
+            // JSON body. Without this an exhausted allowance reads as a broken
+            // answer instead of raising the modal that explains it.
+            throw new ApiError(
+              event.statusCode,
+              event.message,
+              event.details,
+              event.code,
+            );
           }
         }
 
         if (!settled) throw new Error("The answer ended unexpectedly.");
 
+        // That turn spent tokens, so let the sidebar meter catch up.
+        refreshQuota();
+
         // Refresh conversation meta (title may have been set on first turn).
         const conv = await api.chat.getConversation(workspaceId, conversationId);
         setConversation(conv);
         upsert(conv);
-      } catch {
-        // Leaving the page aborts the stream — that is not a failure to report.
+      } catch (err) {
+        // Leaving the page aborts the stream: not a failure to report.
         if (controller.signal.aborted) return;
+
+        // Out of allowance. The modal explains it, so drop the placeholder
+        // rather than leaving a bubble marked "failed": nothing went wrong,
+        // the question simply was not asked.
+        if (handleQuotaError(err)) {
+          setMessages((m) => m.filter((x) => x.id !== pendingId));
+          return;
+        }
+
         setMessages((m) =>
           m.map((x) =>
             x.id === pendingId ? { ...x, pending: false, error: true, content: "" } : x,

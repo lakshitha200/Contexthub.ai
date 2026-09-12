@@ -11,6 +11,7 @@ import { Logo } from "@/components/brand";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
 import { attachmentHandoff, type PendingAttachment } from "@/lib/chat/attachments";
+import { handleQuotaError } from "@/lib/store/quota-store";
 import { useWorkspace } from "@/lib/store/workspace-context";
 
 const SUGGESTIONS = [
@@ -40,10 +41,12 @@ export default function NewChatPage() {
       // so they wait in the hand-off slot for the conversation page to claim.
       attachmentHandoff.set(attachments);
       router.push(`/w/${workspaceId}/chat/${conv.id}?q=${encodeURIComponent(text)}`);
-    } catch {
+    } catch (err) {
       attachmentHandoff.take(); // don't leave a stale hand-off behind
       for (const a of attachments) URL.revokeObjectURL(a.previewUrl);
-      toast("error", "Couldn't start conversation");
+      // The quota modal already says what happened; a toast as well would tell
+      // them the same thing twice in two different registers.
+      if (!handleQuotaError(err)) toast("error", "Couldn't start conversation");
       setBusy(false);
     }
   }

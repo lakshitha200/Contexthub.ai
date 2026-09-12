@@ -14,6 +14,7 @@ import {
 } from '../../generated/prisma/client';
 import { CollectionService } from '../collection/collection.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { QuotaService } from '../quota/quota.service';
 import { ConversationService } from './conversation.service';
 import { AskDto } from './dto/ask.dto';
 import { LlmService, type LlmImage, type LlmTurn } from './llm.service';
@@ -78,6 +79,28 @@ How to answer:
 
 // How many past turns of the conversation to send back to the model.
 const MAX_HISTORY_MESSAGES = 10;
+
+/**
+ * Collects what a turn cost so it can be written once, after the answer is
+ * safely persisted.
+ *
+ * Recording used to be fired off unawaited from inside the provider callback,
+ * which put an upsert on the wire at the exact moment `finalize` wanted a
+ * connection for its own write. On a small pool against a remote database that
+ * is a race the answer can lose, and losing it means the user paid for an
+ * answer that was never saved. Metering can always wait; the answer cannot.
+ */
+function createUsageTally() {
+  let total = 0;
+  return {
+    add: (usage: { totalTokens: number }) => {
+      total += usage.totalTokens;
+    },
+    get total() {
+      return total;
+    },
+  };
+}
 // Max characters of a chunk surfaced as a citation snippet.
 const SNIPPET_LEN = 300;
 
@@ -104,6 +127,7 @@ export class ChatService {
     private readonly rewriter: QueryRewriterService,
     private readonly retrieval: RetrievalService,
     private readonly llm: LlmService,
+    private readonly quota: QuotaService,
     private readonly collections: CollectionService,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -116,15 +140,38 @@ export class ChatService {
     conversationId: string,
     dto: AskDto,
   ): Promise<AskResult> {
-    const turn = await this.prepare(workspaceId, userId, conversationId, dto);
+    const tally = createUsageTally();
+    const turn = await this.prepare(
+      workspaceId,
+      userId,
+      conversationId,
+      dto,
+      tally,
+    );
 
     // Hybrid: always let the LLM answer. It grounds + cites when the passages
     // are relevant, and answers greetings / general questions conversationally
     // otherwise. We then attach ONLY the sources the answer actually cited, so
     // small talk shows no citations and document answers stay grounded.
-    const answer = await this.llm.generate(turn.turns, SYSTEM_INSTRUCTION);
+    try {
+      const answer = await this.llm.generate(turn.turns, SYSTEM_INSTRUCTION, {
+        onUsage: tally.add,
+      });
 
-    return this.finalize(workspaceId, userId, conversationId, turn, answer);
+      return await this.finalize(
+        workspaceId,
+        userId,
+        conversationId,
+        turn,
+        answer,
+      );
+    } finally {
+      // Last, so metering never competes with saving the answer, and in a
+      // `finally` because the provider charged for those tokens whether or not
+      // we managed to persist the result. Skipping the write on failure would
+      // let a repeatedly failing request spend the API key for free.
+      await this.quota.record(userId, tally.total);
+    }
   }
 
   /**
@@ -145,33 +192,50 @@ export class ChatService {
     conversationId: string,
     dto: AskDto,
   ): AsyncGenerator<AskStreamEvent> {
-    const turn = await this.prepare(workspaceId, userId, conversationId, dto);
-
-    let answer = '';
-    for await (const delta of this.llm.generateStream(
-      turn.turns,
-      SYSTEM_INSTRUCTION,
-    )) {
-      answer += delta;
-      yield { type: 'delta', text: delta };
-    }
-
-    // Trim once, at the end — trimming each delta would eat the spaces between.
-    const complete = answer.trim();
-    if (!complete) {
-      throw new InternalServerErrorException(
-        'LLM provider error: model returned an empty response',
-      );
-    }
-
-    const result = await this.finalize(
+    const tally = createUsageTally();
+    const turn = await this.prepare(
       workspaceId,
       userId,
       conversationId,
-      turn,
-      complete,
+      dto,
+      tally,
     );
-    yield { type: 'done', ...result };
+
+    try {
+      let answer = '';
+      for await (const delta of this.llm.generateStream(
+        turn.turns,
+        SYSTEM_INSTRUCTION,
+        { onUsage: tally.add },
+      )) {
+        answer += delta;
+        yield { type: 'delta', text: delta };
+      }
+
+      // Trim once, at the end: trimming each delta would eat the spaces
+      // between them.
+      const complete = answer.trim();
+      if (!complete) {
+        throw new InternalServerErrorException(
+          'LLM provider error: model returned an empty response',
+        );
+      }
+
+      const result = await this.finalize(
+        workspaceId,
+        userId,
+        conversationId,
+        turn,
+        complete,
+      );
+      yield { type: 'done', ...result };
+    } finally {
+      // Last, so metering never competes with saving the answer, and in a
+      // `finally` because the provider charged for those tokens whether or not
+      // we managed to persist the result. Skipping the write on failure would
+      // let a repeatedly failing request spend the API key for free.
+      await this.quota.record(userId, tally.total);
+    }
   }
 
   /**
@@ -184,12 +248,20 @@ export class ChatService {
     userId: string,
     conversationId: string,
     dto: AskDto,
+    tally: ReturnType<typeof createUsageTally>,
   ): Promise<PreparedTurn> {
     const conversation = await this.conversations.getOwnedOrThrow(
       workspaceId,
       userId,
       conversationId,
     );
+
+    // Ownership first, then the allowance: someone else's conversation should
+    // read as 404 regardless of how much quota the caller has left.
+    //
+    // Checked here, before the question is persisted, so a refused turn leaves
+    // no orphan user message sitting in the thread with no answer under it.
+    await this.quota.assertWithinQuota(userId);
 
     // History BEFORE this turn (so the new question isn't duplicated below).
     const priorMessages = await this.conversations.listMessages(
@@ -219,7 +291,11 @@ export class ChatService {
 
     // Resolve follow-ups against the conversation before searching. Returns the
     // question untouched on the first turn, when disabled, or on failure.
-    const searchQuery = await this.rewriter.rewrite(question, priorMessages);
+    const searchQuery = await this.rewriter.rewrite(
+      question,
+      priorMessages,
+      tally.add,
+    );
 
     // Retrieve relevant chunks within the resolved scope.
     const chunks = await this.retrieval.retrieve(

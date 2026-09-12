@@ -128,12 +128,21 @@ export class ChatController {
       }
     } catch (err) {
       // Headers are already sent, so AllExceptionsFilter cannot shape this into
-      // a JSON error response — it has to travel as a frame instead.
+      // a JSON error response — it has to travel as a frame instead. That means
+      // reproducing the parts of the JSON contract clients branch on, `code`
+      // and `details`, or a refusal the UI knows how to explain (an exhausted
+      // allowance) arrives looking like a generic failure.
       const status = err instanceof HttpException ? err.getStatus() : 500;
       const message =
         err instanceof HttpException
           ? err.message
           : 'Something went wrong generating the answer.';
+
+      const payload = err instanceof HttpException ? err.getResponse() : null;
+      const shaped =
+        payload && typeof payload === 'object'
+          ? (payload as { code?: string; details?: unknown })
+          : {};
 
       this.logger.error(
         `Stream failed for conversation ${conversationId}: ${
@@ -141,7 +150,13 @@ export class ChatController {
         }`,
         err instanceof Error ? err.stack : undefined,
       );
-      send({ type: 'error', statusCode: status, message });
+      send({
+        type: 'error',
+        statusCode: status,
+        message,
+        ...(shaped.code ? { code: shaped.code } : {}),
+        ...(shaped.details !== undefined ? { details: shaped.details } : {}),
+      });
     } finally {
       res.end();
     }

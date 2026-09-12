@@ -21,6 +21,13 @@ export interface LlmTurn {
   images?: LlmImage[];
 }
 
+/** What a call actually cost, as reported by the provider. */
+export interface LlmUsage {
+  promptTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
 /**
  * Per-call overrides of the configured defaults. Answering wants a little
  * warmth and room; a mechanical task like rewriting a query wants neither.
@@ -28,6 +35,41 @@ export interface LlmTurn {
 export interface LlmOptions {
   temperature?: number;
   maxOutputTokens?: number;
+  /**
+   * Called once with the provider's own token counts when the call completes.
+   *
+   * A callback rather than a changed return type: every caller here wants the
+   * text and only the metering cares about the cost, so this stays out of the
+   * way of the ones that do not. Never fires on a failed call, because a
+   * request the user did not get an answer to should not be billed to them.
+   */
+  onUsage?: (usage: LlmUsage) => void;
+}
+
+/** Provider usage metadata is entirely optional; treat every field as absent. */
+interface ProviderUsage {
+  promptTokenCount?: number;
+  candidatesTokenCount?: number;
+  totalTokenCount?: number;
+  thoughtsTokenCount?: number;
+}
+
+/**
+ * Normalise the provider's usage block.
+ *
+ * `totalTokenCount` is preferred because it is the number the provider bills,
+ * and on thinking models it already includes reasoning tokens that the prompt
+ * and candidate counts leave out. The sum is only a fallback for when the
+ * provider omits the total.
+ */
+function toUsage(raw: ProviderUsage | undefined): LlmUsage | null {
+  if (!raw) return null;
+  const promptTokens = raw.promptTokenCount ?? 0;
+  const outputTokens =
+    (raw.candidatesTokenCount ?? 0) + (raw.thoughtsTokenCount ?? 0);
+  const totalTokens = raw.totalTokenCount ?? promptTokens + outputTokens;
+  if (totalTokens <= 0) return null;
+  return { promptTokens, outputTokens, totalTokens };
 }
 
 /**
@@ -102,6 +144,10 @@ export class LlmService implements OnModuleInit {
       if (!text) {
         throw new Error('Model returned an empty response');
       }
+
+      const usage = toUsage(response.usageMetadata);
+      if (usage) options.onUsage?.(usage);
+
       return text;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -146,10 +192,19 @@ export class LlmService implements OnModuleInit {
         },
       });
 
+      // Usage arrives on the chunks rather than up front, and the final one
+      // carries the complete figure, so keep overwriting and report at the end.
+      let usage: LlmUsage | null = null;
+
       for await (const chunk of stream) {
+        const chunkUsage = toUsage(chunk.usageMetadata);
+        if (chunkUsage) usage = chunkUsage;
+
         const text = chunk.text;
         if (text) yield text;
       }
+
+      if (usage) options.onUsage?.(usage);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`Gemini stream failed: ${message}`);

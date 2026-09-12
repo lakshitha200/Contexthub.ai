@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!--
+    Browser tab icon: the ContextHub C on its brand tile.
+
+    Self-contained on purpose. A favicon is rendered outside the page, so it
+    gets none of the app's CSS variables and cannot follow the light/dark
+    theme. The gradient is written out literally here, and the tile carries its
+    own background so the mark stays legible on a light tab strip and a dark
+    one alike.
+
+    Drawn on a 64 grid rather than the component's 24, because the geometry is
+    scaled up 2.667x and keeping whole-ish numbers avoids the half-pixel
+    softness you get rounding a 24 grid up to 32 and 48.
+  -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#4338ca"/>
+      <stop offset="38%" stop-color="#6d5ef9"/>
+      <stop offset="68%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+    <radialGradient id="gloss" cx="26%" cy="20%" r="72%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.42"/>
+      <stop offset="62%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="64" height="64" rx="19" fill="url(#tile)"/>
+  <rect width="64" height="64" rx="19" fill="url(#gloss)"/>
+
+  <!-- The C, opening on the right. -->
+  <path
+    d="M47.07 18.43A20.27 20.27 0 1 0 47.07 45.57"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="6.9"
+    stroke-linecap="round"
+  />
+  <!-- The answer it holds. -->
+  <path d="M32 25.87 38.13 32 32 38.13 25.87 32z" fill="#ffffff"/>
+</svg>

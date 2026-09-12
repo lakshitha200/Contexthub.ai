@@ -1,12 +1,21 @@
 import { cn } from "@/lib/utils";
 
 /**
- * The ContextHub glyph, on a 24 unit grid.
+ * The ContextHub glyph: a C holding a lit core.
  *
- * Three sources feed beams into a hexagonal hub with a lit core. It is the
- * product in one mark: many documents converge on one grounded answer, and the
- * core is the answer. Stroke weights are tuned to survive 16px, which is where
- * it actually spends most of its life (sidebar, tab, mobile bar).
+ * The C is the name. What it holds is the product: every answer here is drawn
+ * out of the documents you gave it and carries a citation back to them, so the
+ * mark is the workspace closing around a single bright point, the answer, with
+ * the opening on the right where a question goes in.
+ *
+ * Shape decisions were made by rasterising this onto a 16px grid, because that
+ * is where a logo actually spends its life: sidebar, browser tab, mobile bar.
+ * Two things came out of that. The core is a diamond rather than a circle,
+ * since at 16px it lands on about four pixels and a rotated square keeps a
+ * defined silhouette where a circle turns to mush. And the C is one unbroken
+ * stroke: a version split into page-like segments was indistinguishable from
+ * this at 16px and read as a damaged C at 24px, which is a worse trade than
+ * the meaning it bought.
  */
 export function LogoGlyph({
   className,
@@ -19,39 +28,27 @@ export function LogoGlyph({
     <svg
       viewBox="0 0 24 24"
       fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
       className={className}
       style={style}
     >
-      {/* Beams travelling inward. They stop short of the hub so the eye
-          finishes the line, which keeps the centre from clogging up. */}
-      <g strokeWidth="1.5" opacity="0.55">
-        <path d="M4.6 7.3 9.1 9.9" />
-        <path d="M4.6 16.7 9.1 14.1" />
-        <path d="M19.6 12H14.9" />
-      </g>
-
-      {/* The sources. */}
-      <g fill="currentColor" stroke="none">
-        <circle cx="3.4" cy="6.65" r="1.45" opacity="0.95" />
-        <circle cx="3.4" cy="17.35" r="1.45" opacity="0.8" />
-        <circle cx="20.6" cy="12" r="1.45" opacity="0.65" />
-      </g>
-
-      {/* The hub. */}
+      {/* The C. Drawn the long way round from top-right to bottom-right, so the
+          gap sits on the right where the eye expects a C to open. */}
       <path
-        d="M12 6.2 16.8 8.97v5.53L12 17.3 7.2 14.5V8.97z"
-        fill="currentColor"
-        fillOpacity="0.18"
-        strokeWidth="1.6"
+        d="M17.65 6.91A7.6 7.6 0 1 0 17.65 17.09"
+        stroke="currentColor"
+        strokeWidth="2.6"
+        strokeLinecap="round"
       />
 
-      {/* The answer, with a highlight notch so the core reads as lit rather
-          than as a flat dot. */}
-      <circle cx="12" cy="12" r="2.15" fill="currentColor" stroke="none" />
-      <circle cx="11.3" cy="11.3" r="0.62" fill="#fff" fillOpacity="0.5" stroke="none" />
+      {/* The answer it holds. */}
+      <path d="M12 9.7 14.3 12 12 14.3 9.7 12z" fill="currentColor" />
+      {/* Highlight, offset up and left so the core reads as lit rather than
+          as a flat blob. */}
+      <path
+        d="M11.4 10.55 12.25 11.4 11.4 12.25 10.55 11.4z"
+        fill="#fff"
+        fillOpacity="0.5"
+      />
     </svg>
   );
 }
